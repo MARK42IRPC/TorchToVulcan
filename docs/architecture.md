@@ -37,13 +37,15 @@ an intermediate representation and is not part of the production runtime.
 
 ### Web UI
 
-The planned Web UI uses React, TypeScript, and XYFlow. It has three primary
+The Web UI uses React, TypeScript, and XYFlow. It has three primary
 regions: model/operator navigation, the graph canvas, and a selected-node
 inspector. Connections are derived from tensor producer and consumer
 relationships; the Graph IR does not store a second, redundant edge list.
 
-The Web UI communicates through versioned Graph IR JSON and must not depend on
-Python object serialization or raw ONNX protobuf messages.
+The inspection milestone communicates through a typed JSON report produced by
+FastAPI. Graph editing will communicate through versioned Graph IR JSON. The
+Web UI must not depend on Python object serialization or raw ONNX protobuf
+messages.
 
 ### Compiler service
 
@@ -101,4 +103,3 @@ the compiled manifest, not in the semantic Graph IR.
 - embedding weights as JSON arrays;
 - supporting dynamic shapes without declared bounds;
 - optimizing compiler latency before profiling identifies a bottleneck.
-

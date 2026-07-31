@@ -94,6 +94,8 @@ class OnnxInspectorTests(unittest.TestCase):
 
         self.assertEqual(report.operator_count, 3)
         self.assertEqual(len(report.models[0].graphs), 3)
+        self.assertEqual(report.models[0].graphs[0].inputs, ("condition", "x"))
+        self.assertEqual(report.models[0].graphs[0].outputs, ("y",))
         self.assertEqual(
             {item.op_type for item in report.operator_summary},
             {"If", "Neg", "Relu"},

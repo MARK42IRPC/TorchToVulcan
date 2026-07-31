@@ -1,51 +1,179 @@
 # Torch to Vulcan
 
-Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. The project will
-provide a node-based Web UI for inspecting and rewriting ONNX graphs, an
-offline compiler that lowers graph operators to compute shaders, and a small
-Vulkan runtime.
+[中文](#中文) | [English](#english)
 
-> The project name uses "Vulcan"; the graphics and compute API targeted by the
-> compiler is Vulkan.
+> 项目名使用 **Vulcan**；编译器实际面向的图形与计算 API 是 **Vulkan**。
 
-## Current scope
+## 中文
 
-This repository currently provides the first importer and defines the contracts
-on which the Web UI, compiler, and runtime will be built:
+Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节点式 WebUI、离线图编译器和轻量 Vulkan Runtime 组成，目标是将 ONNX 前向推理图转换为可在通用 GPU 上运行的计算着色器。
 
-- direct ONNX and ZIP-contained ONNX operator inspection;
-- a versioned Graph IR JSON Schema;
-- an initial compiled-model manifest schema;
-- dependency-free Python Graph IR data structures and validation;
-- an example graph and unit tests;
-- architecture, development, and format documentation.
+### 当前能力
 
-## Repository layout
+- 直接导入单个 `.onnx` 文件；
+- 导入 `.zip` 并递归发现其中的所有 ONNX 模型；
+- 识别主图与嵌套子图中的算子；
+- 在 WebUI 中浏览模型、算子、输入输出节点和 Tensor 连线；
+- 输出适合 WebUI 或其他工具消费的 JSON 检查报告；
+- 版本化 Graph IR 与编译模型包 Schema；
+- Python Graph IR 数据结构、跨对象校验和测试。
 
-```text
-docs/                   Architecture and contributor documentation
-examples/               Small, reviewable Graph IR examples
-schemas/                Language-neutral JSON contracts
-src/torch_to_vulcan/    Python compiler package
-tests/                  Compiler and contract tests
-```
+`ckpt`、`pth` 和其他 Torch 容器格式计划通过独立的安全适配器接入，目前尚未实现。
 
-Planned components will live in `web/`, `compiler/`, and `runtime/` once their
-toolchains are introduced. The Python package under `src/` is the initial
-compiler core and ONNX adapter home.
+### 技术栈
 
-## Quick start
+- WebUI：React、TypeScript、Vite、XYFlow；
+- 导入与 API：Python、ONNX、FastAPI；
+- 参考计算：Torch，后续接入；
+- Shader：GLSL Compute 到 SPIR-V，后续接入；
+- Runtime：Vulkan，候选实现语言为 Zig。
 
-Python 3.11 or later is required.
+### 安装
+
+需要 Python 3.11+、Node.js 20+ 和 Git。Windows：
 
 ```powershell
-py -3.11 -m pip install -e ".[dev]"
-py -3.11 -m unittest discover -s tests -v
-py -3.11 -m torch_to_vulcan validate examples/relu.graph.json
-ttv inspect path\to\models.zip
-ttv inspect path\to\model.onnx
+.\scripts\setup.ps1
 ```
 
-See [docs/development.md](docs/development.md) for the development workflow and
-[docs/architecture.md](docs/architecture.md) for subsystem boundaries. The
-current ZIP importer is documented in [docs/importer.md](docs/importer.md).
+Linux/macOS：
+
+```bash
+./scripts/setup.sh
+```
+
+脚本会创建 `.venv`，安装 Python 的开发与 Web 依赖，并安装锁定的前端依赖。
+
+### 启动 WebUI
+
+Windows：
+
+```powershell
+.\scripts\dev.ps1
+```
+
+Linux/macOS：
+
+```bash
+./scripts/dev.sh
+```
+
+WebUI 默认运行在 `http://127.0.0.1:5173`，API 默认运行在 `http://127.0.0.1:8000`。
+
+### 命令行
+
+```powershell
+.venv\Scripts\ttv inspect path\to\model.onnx
+.venv\Scripts\ttv inspect path\to\models.zip
+.venv\Scripts\ttv inspect path\to\models.zip --summary-only
+.venv\Scripts\ttv inspect path\to\models.zip --json
+```
+
+### 测试与构建
+
+```powershell
+.venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web run build
+```
+
+### 仓库结构
+
+```text
+docs/                   架构、格式与开发文档
+examples/               小型 Graph IR 示例
+schemas/                跨语言 JSON 契约
+scripts/                安装与开发启动脚本
+src/torch_to_vulcan/    导入器、Graph IR 和 HTTP API
+tests/                  Python 单元与契约测试
+web/                    React 节点式 WebUI
+```
+
+进一步阅读：[架构](docs/architecture.md)、[导入器](docs/importer.md)、[Graph IR](docs/graph-ir.md)、[开发流程](docs/development.md)和[路线图](docs/roadmap.md)。
+
+---
+
+## English
+
+Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. It combines a node-based Web UI, an offline graph compiler, and a small Vulkan runtime with the goal of lowering ONNX inference graphs into compute shaders for general-purpose GPUs.
+
+### Current capabilities
+
+- import a direct `.onnx` file;
+- import a `.zip` and recursively discover every contained ONNX model;
+- inspect operators in root graphs and nested subgraphs;
+- browse models, operators, graph inputs/outputs, and tensor connections in the Web UI;
+- emit machine-readable JSON inspection reports;
+- maintain versioned Graph IR and compiled-package schemas;
+- validate compiler-side Graph IR structures and cross-object invariants.
+
+`ckpt`, `pth`, and other Torch container formats are planned as separate security-aware source adapters and are not implemented yet.
+
+### Technology stack
+
+- Web UI: React, TypeScript, Vite, and XYFlow;
+- importer and API: Python, ONNX, and FastAPI;
+- reference execution: Torch, planned;
+- shaders: GLSL Compute to SPIR-V, planned;
+- runtime: Vulkan, with Zig as the current implementation candidate.
+
+### Setup
+
+Python 3.11+, Node.js 20+, and Git are required. On Windows:
+
+```powershell
+.\scripts\setup.ps1
+```
+
+On Linux or macOS:
+
+```bash
+./scripts/setup.sh
+```
+
+The script creates `.venv`, installs Python development and Web dependencies, and installs the locked frontend dependencies.
+
+### Start the Web UI
+
+On Windows:
+
+```powershell
+.\scripts\dev.ps1
+```
+
+On Linux or macOS:
+
+```bash
+./scripts/dev.sh
+```
+
+The Web UI defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.0.0.1:8000`.
+
+### Command line
+
+```powershell
+.venv\Scripts\ttv inspect path\to\model.onnx
+.venv\Scripts\ttv inspect path\to\models.zip
+.venv\Scripts\ttv inspect path\to\models.zip --summary-only
+.venv\Scripts\ttv inspect path\to\models.zip --json
+```
+
+### Test and build
+
+```powershell
+.venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web run build
+```
+
+### Repository layout
+
+```text
+docs/                   Architecture, format, and development documentation
+examples/               Small Graph IR examples
+schemas/                Language-neutral JSON contracts
+scripts/                Setup and development launch scripts
+src/torch_to_vulcan/    Importer, Graph IR, and HTTP API
+tests/                  Python unit and contract tests
+web/                    React node-based Web UI
+```
+
+Read more in the [architecture](docs/architecture.md), [importer](docs/importer.md), [Graph IR](docs/graph-ir.md), [development](docs/development.md), and [roadmap](docs/roadmap.md) documents.

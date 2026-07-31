@@ -1,0 +1,26 @@
+{
+  "name": "torch-to-vulcan-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.8.2",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.0",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0"
+  }
+}

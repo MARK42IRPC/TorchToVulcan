@@ -4,29 +4,31 @@
 
 - Git 2.28 or later;
 - Python 3.11 or later;
+- Node.js 20 or later;
 - PowerShell 7, Bash, or another shell capable of invoking Python;
-- a virtual environment is recommended.
+- a Python virtual environment.
 
-Node.js, ONNX, Torch, Zig, the Vulkan SDK, and shader compiler dependencies are
-intentionally deferred until the component that needs each tool is introduced.
+Torch, Zig, the Vulkan SDK, and shader compiler dependencies remain deferred
+until the component that needs each tool is introduced.
 
 ## Setup
 
 ```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+.\scripts\setup.ps1
 ```
 
 Run the tests and validate the example contract:
 
 ```powershell
-py -3.11 -m unittest discover -s tests -v
-py -3.11 -m torch_to_vulcan validate examples/relu.graph.json
+.venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web run build
+.venv\Scripts\python -m torch_to_vulcan validate examples/relu.graph.json
 ```
 
-On Unix-like systems, replace `py -3.11` with `python3`.
+On Unix-like systems, run `./scripts/setup.sh` and use `.venv/bin/python`.
+
+Start both development servers with `.\scripts\dev.ps1` on Windows or
+`./scripts/dev.sh` on Unix-like systems.
 
 ## Working agreements
 

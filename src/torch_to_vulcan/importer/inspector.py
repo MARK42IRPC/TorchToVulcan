@@ -176,7 +176,15 @@ def _inspect_graph(graph: GraphProto, path: str, reports: list[GraphReport]) -> 
         )
         for index, node in enumerate(graph.node)
     )
-    reports.append(GraphReport(path=path, name=graph.name, operators=operators))
+    reports.append(
+        GraphReport(
+            path=path,
+            name=graph.name,
+            inputs=tuple(value.name for value in graph.input),
+            outputs=tuple(value.name for value in graph.output),
+            operators=operators,
+        )
+    )
 
     for node_index, node in enumerate(graph.node):
         node_segment = node.name or f"{node.op_type}[{node_index}]"

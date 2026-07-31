@@ -28,6 +28,8 @@ class OperatorReport:
 class GraphReport:
     path: str
     name: str
+    inputs: tuple[str, ...]
+    outputs: tuple[str, ...]
     operators: tuple[OperatorReport, ...]
 
 
@@ -83,6 +85,8 @@ class InspectionReport:
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
+        for model_value, model in zip(result["models"], self.models, strict=True):
+            model_value["operator_count"] = model.operator_count
         result["operator_count"] = self.operator_count
         result["operator_summary"] = [asdict(item) for item in self.operator_summary]
         return result
