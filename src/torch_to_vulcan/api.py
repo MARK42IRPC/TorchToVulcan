@@ -9,12 +9,11 @@ from typing import Annotated, Any
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from .importer import InspectionError, inspect_path
+from .importer import InspectionError, inspect_path, source_format, supported_input_suffixes
 
 
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
-SUPPORTED_SUFFIXES = {".onnx", ".zip"}
 
 app = FastAPI(
     title="Torch to Vulcan API",
@@ -25,16 +24,19 @@ app = FastAPI(
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "api_version": "0.2",
+        "formats": list(supported_input_suffixes()),
+    }
 
 
 @app.post("/api/inspect")
 async def inspect_upload(file: Annotated[UploadFile, File(...)]) -> dict[str, Any]:
     filename = Path(file.filename or "upload").name
-    suffix = Path(filename).suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES:
-        expected = ", ".join(sorted(SUPPORTED_SUFFIXES))
+    if source_format(filename) is None:
+        expected = ", ".join(supported_input_suffixes())
         raise HTTPException(status_code=400, detail=f"unsupported file type; expected {expected}")
 
     with TemporaryDirectory(prefix="torch-to-vulcan-") as temporary_directory:

@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser = subparsers.add_parser("validate", help="validate a Graph IR JSON file")
     validate_parser.add_argument("path", type=Path)
     inspect_parser = subparsers.add_parser(
-        "inspect", help="list operators in an ONNX model or ZIP archive"
+        "inspect", help="list operators in an ONNX model or supported archive"
     )
     inspect_parser.add_argument("path", type=Path)
     inspect_parser.add_argument("--json", action="store_true", help="write the report as JSON")

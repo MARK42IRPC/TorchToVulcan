@@ -45,7 +45,7 @@ export interface OperatorCount {
 
 export interface InspectionReport {
   source: string;
-  source_type: "onnx" | "zip";
+  source_type: "onnx" | "zip" | "tar" | "7z" | "gzip" | "bzip2" | "xz";
   models: ModelReport[];
   errors: ModelError[];
   operator_count: number;

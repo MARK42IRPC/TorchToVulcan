@@ -1,12 +1,19 @@
-"""Inspect a direct ONNX model or models stored in a ZIP archive."""
+"""Inspect ONNX files and common compressed containers."""
 
 from __future__ import annotations
 
+import bz2
+import gzip
+import lzma
+import tarfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
+from typing import Iterable
 from zipfile import BadZipFile, LargeZipFile, ZipFile, ZipInfo
 
 import onnx
+import py7zr
 from google.protobuf.message import DecodeError
 from onnx import AttributeProto, GraphProto, ModelProto
 
@@ -31,21 +38,64 @@ class InspectionError(ValueError):
     """Raised when an input source cannot be inspected safely."""
 
 
+_ARCHIVE_FORMATS = {
+    ".zip": "zip",
+    ".tar": "tar",
+    ".tar.gz": "tar",
+    ".tgz": "tar",
+    ".tar.bz2": "tar",
+    ".tbz2": "tar",
+    ".tar.xz": "tar",
+    ".txz": "tar",
+    ".7z": "7z",
+}
+_COMPRESSED_MODEL_FORMATS = {
+    ".onnx.gz": "gzip",
+    ".onnx.bz2": "bzip2",
+    ".onnx.xz": "xz",
+}
+
+
+def supported_input_suffixes() -> tuple[str, ...]:
+    """Return suffixes accepted by the file picker and HTTP adapter."""
+
+    return (".onnx", *_COMPRESSED_MODEL_FORMATS, *_ARCHIVE_FORMATS)
+
+
+def source_format(source_name: str | Path) -> str | None:
+    """Return the importer format for a filename, or ``None`` if unsupported."""
+
+    name = Path(source_name).name.lower()
+    if name.endswith(".onnx"):
+        return "onnx"
+    for suffix, format_name in (*_COMPRESSED_MODEL_FORMATS.items(), *_ARCHIVE_FORMATS.items()):
+        if name.endswith(suffix):
+            return format_name
+    return None
+
+
 def inspect_path(
     source_path: str | Path,
     *,
     limits: InspectionLimits = InspectionLimits(),
 ) -> InspectionReport:
-    """Inspect a direct ``.onnx`` model or a ``.zip`` containing ONNX models."""
+    """Inspect an ONNX file or a supported compressed container."""
 
     path = Path(source_path)
-    suffix = path.suffix.lower()
-    if suffix == ".onnx":
+    format_name = source_format(path)
+    if format_name == "onnx":
         return inspect_onnx(path, limits=limits)
-    if suffix == ".zip":
+    if format_name == "zip":
         return inspect_archive(path, limits=limits)
+    if format_name == "tar":
+        return inspect_tar(path, limits=limits)
+    if format_name == "7z":
+        return inspect_7z(path, limits=limits)
+    if format_name in {"gzip", "bzip2", "xz"}:
+        return inspect_compressed_onnx(path, format_name, limits=limits)
+    supported = ", ".join(supported_input_suffixes())
     raise InspectionError(
-        f"unsupported input format {path.suffix or '(none)'}; expected .onnx or .zip"
+        f"unsupported input format {path.suffix or '(none)'}; expected {supported}"
     )
 
 
@@ -65,13 +115,42 @@ def inspect_onnx(
                 ModelError(path.name, f"model is {size} bytes; limit is {limits.max_model_bytes}")
             )
             return report
-        model = onnx.load_model_from_string(path.read_bytes())
-        report.models.append(_inspect_model(path.name, model))
+        _inspect_model_bytes(report, path.name, path.read_bytes())
     except FileNotFoundError as error:
         raise InspectionError(f"model does not exist: {path}") from error
     except PermissionError as error:
         raise InspectionError(f"model cannot be read: {path}") from error
-    except (DecodeError, OSError, ValueError) as error:
+    except OSError as error:
+        report.errors.append(ModelError(path.name, str(error) or type(error).__name__))
+    return report
+
+
+def inspect_compressed_onnx(
+    model_path: str | Path,
+    format_name: str,
+    *,
+    limits: InspectionLimits = InspectionLimits(),
+) -> InspectionReport:
+    """Inspect one gzip, bzip2, or xz-compressed ONNX file."""
+
+    path = Path(model_path)
+    report = InspectionReport(source=str(path), source_type=format_name)
+    try:
+        compressed = path.read_bytes()
+        if format_name == "gzip":
+            stream = gzip.GzipFile(fileobj=BytesIO(compressed))
+        elif format_name == "bzip2":
+            stream = bz2.BZ2File(BytesIO(compressed))
+        else:
+            stream = lzma.LZMAFile(BytesIO(compressed))
+        with stream:
+            data = stream.read(limits.max_model_bytes + 1)
+        _inspect_model_bytes(report, path.name, data, limits=limits)
+    except FileNotFoundError as error:
+        raise InspectionError(f"model does not exist: {path}") from error
+    except PermissionError as error:
+        raise InspectionError(f"model cannot be read: {path}") from error
+    except (OSError, EOFError, lzma.LZMAError, ValueError) as error:
         report.errors.append(ModelError(path.name, str(error) or type(error).__name__))
     return report
 
@@ -81,16 +160,10 @@ def inspect_archive(
     *,
     limits: InspectionLimits = InspectionLimits(),
 ) -> InspectionReport:
-    """Parse every ``.onnx`` entry in a ZIP and return an inspection report.
-
-    Entries are read directly from the archive. Tensor external-data references
-    are intentionally not resolved because operator discovery only needs the
-    protobuf graph structure.
-    """
+    """Parse every ONNX entry in a ZIP archive without extracting files."""
 
     path = Path(archive_path)
     report = InspectionReport(source=str(path), source_type="zip")
-
     try:
         with ZipFile(path, "r", allowZip64=True) as archive:
             entries = _onnx_entries(archive, limits)
@@ -106,20 +179,150 @@ def inspect_archive(
                         )
                     )
                     continue
-
-                try:
-                    model = onnx.load_model_from_string(archive.read(entry))
-                    report.models.append(_inspect_model(entry.filename, model))
-                except (BadZipFile, DecodeError, OSError, ValueError) as error:
-                    report.errors.append(ModelError(entry.filename, str(error) or type(error).__name__))
+                _inspect_model_bytes(report, entry.filename, archive.read(entry), limits=limits)
     except FileNotFoundError as error:
         raise InspectionError(f"archive does not exist: {path}") from error
     except PermissionError as error:
         raise InspectionError(f"archive cannot be read: {path}") from error
     except (BadZipFile, LargeZipFile) as error:
         raise InspectionError(f"invalid ZIP archive: {path}: {error}") from error
-
     return report
+
+
+def inspect_tar(
+    archive_path: str | Path,
+    *,
+    limits: InspectionLimits = InspectionLimits(),
+) -> InspectionReport:
+    """Parse ONNX entries in a TAR-family archive (including gzip/bzip2/xz)."""
+
+    path = Path(archive_path)
+    report = InspectionReport(source=str(path), source_type="tar")
+    try:
+        with tarfile.open(path, mode="r:*") as archive:
+            entries = sorted(
+                (
+                    member
+                    for member in archive.getmembers()
+                    if member.isfile() and member.name.lower().endswith(".onnx")
+                ),
+                key=lambda member: member.name.casefold(),
+            )
+            _validate_archive_sizes(
+                ((member.name, member.size) for member in entries), limits=limits
+            )
+            for entry in entries:
+                if entry.size > limits.max_model_bytes:
+                    report.errors.append(
+                        ModelError(
+                            entry.name,
+                            f"model is {entry.size} bytes; limit is {limits.max_model_bytes}",
+                        )
+                    )
+                    continue
+                stream = archive.extractfile(entry)
+                if stream is None:
+                    report.errors.append(ModelError(entry.name, "TAR entry could not be read"))
+                    continue
+                _inspect_model_bytes(
+                    report,
+                    entry.name,
+                    stream.read(limits.max_model_bytes + 1),
+                    limits=limits,
+                )
+    except FileNotFoundError as error:
+        raise InspectionError(f"archive does not exist: {path}") from error
+    except PermissionError as error:
+        raise InspectionError(f"archive cannot be read: {path}") from error
+    except (tarfile.ReadError, EOFError, OSError) as error:
+        raise InspectionError(f"invalid TAR archive: {path}: {error}") from error
+    return report
+
+
+def inspect_7z(
+    archive_path: str | Path,
+    *,
+    limits: InspectionLimits = InspectionLimits(),
+) -> InspectionReport:
+    """Parse ONNX entries in a 7z archive using the pure-Python py7zr adapter."""
+
+    path = Path(archive_path)
+    report = InspectionReport(source=str(path), source_type="7z")
+    try:
+        with py7zr.SevenZipFile(path, mode="r") as archive:
+            entries = sorted(
+                (
+                    info
+                    for info in archive.list()
+                    if not info.is_directory and info.filename.lower().endswith(".onnx")
+                ),
+                key=lambda info: info.filename.casefold(),
+            )
+            _validate_archive_sizes(
+                ((info.filename, int(info.uncompressed or 0)) for info in entries), limits=limits
+            )
+            readable = [
+                info for info in entries if int(info.uncompressed or 0) <= limits.max_model_bytes
+            ]
+            for info in entries:
+                size = int(info.uncompressed or 0)
+                if size > limits.max_model_bytes:
+                    report.errors.append(
+                        ModelError(
+                            info.filename,
+                            f"model is {size} bytes; limit is {limits.max_model_bytes}",
+                        )
+                    )
+            payloads = archive.read(targets=[info.filename for info in readable]) or {}
+            for info in readable:
+                payload = payloads.get(info.filename)
+                if payload is None:
+                    report.errors.append(ModelError(info.filename, "7z entry could not be read"))
+                    continue
+                _inspect_model_bytes(report, info.filename, payload.read(), limits=limits)
+    except FileNotFoundError as error:
+        raise InspectionError(f"archive does not exist: {path}") from error
+    except PermissionError as error:
+        raise InspectionError(f"archive cannot be read: {path}") from error
+    except (py7zr.exceptions.Bad7zFile, EOFError, OSError, ValueError) as error:
+        raise InspectionError(f"invalid 7z archive: {path}: {error}") from error
+    return report
+
+
+def _inspect_model_bytes(
+    report: InspectionReport,
+    model_path: str,
+    data: bytes,
+    *,
+    limits: InspectionLimits = InspectionLimits(),
+) -> None:
+    if len(data) > limits.max_model_bytes:
+        report.errors.append(
+            ModelError(model_path, f"model exceeds {limits.max_model_bytes} byte limit")
+        )
+        return
+    try:
+        model = onnx.load_model_from_string(data)
+        report.models.append(_inspect_model(model_path, model))
+    except (DecodeError, OSError, ValueError) as error:
+        report.errors.append(ModelError(model_path, str(error) or type(error).__name__))
+
+
+def _validate_archive_sizes(
+    entries: Iterable[tuple[str, int]],
+    *,
+    limits: InspectionLimits,
+) -> None:
+    values = list(entries)
+    if len(values) > limits.max_model_count:
+        raise InspectionError(
+            f"archive contains {len(values)} ONNX models; limit is {limits.max_model_count}"
+        )
+    total_bytes = sum(size for _, size in values)
+    if total_bytes > limits.max_total_model_bytes:
+        raise InspectionError(
+            f"ONNX entries total {total_bytes} bytes; limit is {limits.max_total_model_bytes}"
+        )
 
 
 def _onnx_entries(archive: ZipFile, limits: InspectionLimits) -> list[ZipInfo]:
@@ -131,16 +334,9 @@ def _onnx_entries(archive: ZipFile, limits: InspectionLimits) -> list[ZipInfo]:
         ),
         key=lambda entry: entry.filename.casefold(),
     )
-    if len(entries) > limits.max_model_count:
-        raise InspectionError(
-            f"archive contains {len(entries)} ONNX models; limit is {limits.max_model_count}"
-        )
-
-    total_bytes = sum(entry.file_size for entry in entries)
-    if total_bytes > limits.max_total_model_bytes:
-        raise InspectionError(
-            f"ONNX entries total {total_bytes} bytes; limit is {limits.max_total_model_bytes}"
-        )
+    _validate_archive_sizes(
+        ((entry.filename, entry.file_size) for entry in entries), limits=limits
+    )
     return entries
 
 

@@ -158,7 +158,7 @@ export default function App() {
             <div className="upload-tool__copy">
               <strong>{selectedFile?.name ?? "导入模型"}</strong>
               <span>
-                {selectedFile ? `${formatBytes(selectedFile.size)} / ${report?.source_type ?? "..."}` : "ONNX / ZIP"}
+                {selectedFile ? `${formatBytes(selectedFile.size)} / ${report?.source_type ?? "..."}` : "ONNX / ARCHIVE"}
               </span>
             </div>
             <button type="button" onClick={() => fileInputRef.current?.click()}>
@@ -169,7 +169,7 @@ export default function App() {
             ref={fileInputRef}
             className="visually-hidden"
             type="file"
-            accept=".onnx,.zip,application/zip,application/octet-stream"
+            accept=".onnx,.onnx.gz,.onnx.bz2,.onnx.xz,.zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz,.7z,application/zip,application/gzip,application/x-7z-compressed,application/x-tar,application/octet-stream"
             onChange={onFileChange}
           />
           {error && (
@@ -196,7 +196,7 @@ export default function App() {
                 key={`${item.path}-${index}`}
                 onClick={() => selectModel(index)}
               >
-                {report.source_type === "zip" ? <FileArchive size={14} /> : <Cpu size={14} />}
+                {report.source_type !== "onnx" ? <FileArchive size={14} /> : <Cpu size={14} />}
                 <span>{item.path}</span>
                 <b>{item.operator_count}</b>
               </button>

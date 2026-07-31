@@ -10,8 +10,8 @@ Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节
 
 ### 当前能力
 
-- 直接导入单个 `.onnx` 文件；
-- 导入 `.zip` 并递归发现其中的所有 ONNX 模型；
+- 直接导入 `.onnx`，以及 `.onnx.gz/.bz2/.xz` 单文件压缩模型；
+- 导入 ZIP、7z、TAR、TGZ、TBZ2、TXZ 等归档并递归发现其中的 ONNX 模型；
 - 识别主图与嵌套子图中的算子；
 - 在 WebUI 中浏览模型、算子、输入输出节点和 Tensor 连线；
 - 输出适合 WebUI 或其他工具消费的 JSON 检查报告；
@@ -19,6 +19,7 @@ Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节
 - Python Graph IR 数据结构、跨对象校验和测试。
 
 `ckpt`、`pth` 和其他 Torch 容器格式计划通过独立的安全适配器接入，目前尚未实现。
+RAR 目前也未启用，因为跨平台解析需要额外的 `unrar` 或 `bsdtar` 程序。
 
 ### 技术栈
 
@@ -69,6 +70,8 @@ WebUI 默认运行在 `http://127.0.0.1:5173`，API 默认运行在 `http://127.
 ```powershell
 .venv\Scripts\ttv inspect path\to\model.onnx
 .venv\Scripts\ttv inspect path\to\models.zip
+.venv\Scripts\ttv inspect path\to\models.tar.gz
+.venv\Scripts\ttv inspect path\to\models.7z
 .venv\Scripts\ttv inspect path\to\models.zip --summary-only
 .venv\Scripts\ttv inspect path\to\models.zip --json
 ```
@@ -102,8 +105,8 @@ Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. It combines a node-
 
 ### Current capabilities
 
-- import a direct `.onnx` file;
-- import a `.zip` and recursively discover every contained ONNX model;
+- import direct `.onnx` files and `.onnx.gz/.bz2/.xz` compressed models;
+- import ZIP, 7z, TAR, TGZ, TBZ2, and TXZ archives and recursively discover ONNX models;
 - inspect operators in root graphs and nested subgraphs;
 - browse models, operators, graph inputs/outputs, and tensor connections in the Web UI;
 - emit machine-readable JSON inspection reports;
@@ -111,6 +114,7 @@ Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. It combines a node-
 - validate compiler-side Graph IR structures and cross-object invariants.
 
 `ckpt`, `pth`, and other Torch container formats are planned as separate security-aware source adapters and are not implemented yet.
+RAR is also deferred because cross-platform parsing requires an external `unrar` or `bsdtar` executable.
 
 ### Technology stack
 
@@ -161,6 +165,8 @@ The Web UI defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.
 ```powershell
 .venv\Scripts\ttv inspect path\to\model.onnx
 .venv\Scripts\ttv inspect path\to\models.zip
+.venv\Scripts\ttv inspect path\to\models.tar.gz
+.venv\Scripts\ttv inspect path\to\models.7z
 .venv\Scripts\ttv inspect path\to\models.zip --summary-only
 .venv\Scripts\ttv inspect path\to\models.zip --json
 ```

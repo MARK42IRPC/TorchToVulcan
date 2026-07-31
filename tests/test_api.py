@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import unittest
 from io import BytesIO
 
@@ -27,7 +28,9 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(response.json()["api_version"], "0.2")
+        self.assertIn(".7z", response.json()["formats"])
 
     def test_inspects_uploaded_onnx(self) -> None:
         response = self.client.post(
@@ -49,7 +52,23 @@ class ApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("expected .onnx, .zip", response.json()["detail"])
+        self.assertIn(".7z", response.json()["detail"])
+
+    def test_inspects_uploaded_gzip_onnx(self) -> None:
+        response = self.client.post(
+            "/api/inspect",
+            files={
+                "file": (
+                    "relu.onnx.gz",
+                    BytesIO(gzip.compress(make_relu_model())),
+                    "application/gzip",
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source_type"], "gzip")
+        self.assertEqual(response.json()["operator_summary"][0]["op_type"], "Relu")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 authors = []
 dependencies = [
     "onnx>=1.16,<2",
+    "py7zr>=0.22,<1",
 ]
 
 [project.optional-dependencies]

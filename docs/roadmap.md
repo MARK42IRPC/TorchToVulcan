@@ -9,7 +9,7 @@
 
 ## Milestone 1: ONNX inspection
 
-- direct ONNX and ZIP-based recursive operator inspection;
+- direct/compressed ONNX and common archive-based recursive operator inspection;
 - ONNX-to-Graph-IR importer with deterministic IDs;
 - shape/type inference and initializer extraction;
 - FastAPI graph endpoints;
