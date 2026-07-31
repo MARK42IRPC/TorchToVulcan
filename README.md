@@ -10,9 +10,10 @@ Vulkan runtime.
 
 ## Current scope
 
-This repository currently defines the contracts on which the importer, Web UI,
-compiler, and runtime will be built:
+This repository currently provides the first importer and defines the contracts
+on which the Web UI, compiler, and runtime will be built:
 
+- direct ONNX and ZIP-contained ONNX operator inspection;
 - a versioned Graph IR JSON Schema;
 - an initial compiled-model manifest schema;
 - dependency-free Python Graph IR data structures and validation;
@@ -41,7 +42,10 @@ Python 3.11 or later is required.
 py -3.11 -m pip install -e ".[dev]"
 py -3.11 -m unittest discover -s tests -v
 py -3.11 -m torch_to_vulcan validate examples/relu.graph.json
+ttv inspect path\to\models.zip
+ttv inspect path\to\model.onnx
 ```
 
 See [docs/development.md](docs/development.md) for the development workflow and
-[docs/architecture.md](docs/architecture.md) for subsystem boundaries.
+[docs/architecture.md](docs/architecture.md) for subsystem boundaries. The
+current ZIP importer is documented in [docs/importer.md](docs/importer.md).

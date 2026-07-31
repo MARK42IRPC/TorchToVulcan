@@ -9,7 +9,8 @@
 
 ## Milestone 1: ONNX inspection
 
-- ONNX importer with deterministic IDs;
+- direct ONNX and ZIP-based recursive operator inspection;
+- ONNX-to-Graph-IR importer with deterministic IDs;
 - shape/type inference and initializer extraction;
 - FastAPI graph endpoints;
 - React three-panel shell and XYFlow graph rendering;
@@ -48,4 +49,3 @@
 - Transformer operators;
 - INT8 quantization;
 - stable compiled-package distribution and compatibility policy.
-
