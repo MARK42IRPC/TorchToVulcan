@@ -36,6 +36,8 @@ Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节
 .\scripts\setup.ps1
 ```
 
+也可以直接双击根目录的 `install-deps.bat`。
+
 Linux/macOS：
 
 ```bash
@@ -51,6 +53,8 @@ Windows：
 ```powershell
 .\scripts\dev.ps1
 ```
+
+也可以直接双击根目录的 `start.bat`。
 
 Linux/macOS：
 
@@ -124,6 +128,8 @@ Python 3.11+, Node.js 20+, and Git are required. On Windows:
 .\scripts\setup.ps1
 ```
 
+You can also double-click `install-deps.bat` in the repository root.
+
 On Linux or macOS:
 
 ```bash
@@ -139,6 +145,8 @@ On Windows:
 ```powershell
 .\scripts\dev.ps1
 ```
+
+You can also double-click `start.bat` in the repository root.
 
 On Linux or macOS:
 
