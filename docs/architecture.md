@@ -47,6 +47,56 @@ FastAPI. Graph editing will communicate through versioned Graph IR JSON. The
 Web UI must not depend on Python object serialization or raw ONNX protobuf
 messages.
 
+#### Graph layout
+
+Canvas layout is derived from the complete tensor producer/consumer graph and
+does not rely on ONNX node array order. The layout pipeline is:
+
+1. resolve all tensor producers and consumer edges;
+2. find strongly connected components with Tarjan's algorithm;
+3. collapse components into a DAG and assign longest-path ranks;
+4. pin graph inputs to the left rank and graph outputs to one rightmost rank;
+5. move root `Constant` nodes next to their earliest consumers;
+6. run alternating barycentric sweeps to reduce crossings within each rank;
+7. expand cyclic components vertically and render their back edges distinctly.
+
+ONNX `Loop` and `Scan` nodes are marked as control-flow loops even when the
+surrounding ONNX graph is acyclic. Every input and output port has a separate
+XYFlow handle so parallel tensor edges do not share a single endpoint.
+The operator navigator groups identical `(domain, op_type)` pairs while retaining
+the first concrete node as its selection target. Tensor types and shapes are read
+from the inspection report; missing intermediate metadata is rendered as
+`UNKNOWN` instead of being inferred in the browser.
+
+#### Hierarchical preview
+
+Large reports open at a model-pipeline overview instead of immediately rendering
+every ONNX operator. Each ONNX file is a module whose complete input/output
+signature remains available in the inspector. Exact cross-model tensor-name
+matches are rendered as confirmed connections. Matches based on conventions such
+as `present_*` to `past_*` are amber dashed candidates because an ONNX archive does
+not contain an authoritative cross-file execution manifest.
+
+Double-clicking a module descends through ONNX node-name scopes. Boundary tensors
+between scopes are aggregated into one bus per source/target pair. A leaf scope
+restores exact operator and tensor edges; unscoped regions above the leaf budget
+are split into topology ranges of at most 80 operators. Breadcrumbs preserve the
+current location and provide direct navigation back to the pipeline.
+
+All regular connections use Bezier curves between their concrete source and
+target tensor handles. Graph inputs use green nodes and edges, graph outputs use
+amber, and cycle or inferred edges retain distinct dashed styling.
+
+Boundary-state autoregression is represented as a Blender-style loop zone. A
+model is considered a loop candidate when its outputs feed its own inputs through
+strong state conventions such as `present_*` to `past_*`, identical state names,
+or `y` to `iy`. This self-feedback is recorded in addition to any first-iteration
+initializer edge from another model. The zone displays the feedback tensor count,
+uses a dedicated edge routed from the body output handle back to its input handle,
+and labels `stop`, `condition`, `finished`, or `eos` outputs as exit conditions.
+Because this relationship is reconstructed from signatures rather than an
+execution manifest, the loop remains visually marked as inferred.
+
 ### Compiler service
 
 The first compiler implementation is Python so it can directly use the ONNX

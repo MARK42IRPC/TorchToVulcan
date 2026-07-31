@@ -21,7 +21,9 @@ Run the tests and validate the example contract:
 
 ```powershell
 .venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web test
 npm --prefix web run build
+npm --prefix web run test:e2e
 .venv\Scripts\python -m torch_to_vulcan validate examples/relu.graph.json
 ```
 

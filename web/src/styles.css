@@ -14,6 +14,7 @@
   --dim: #596468;
   --cyan: #65ddd8;
   --cyan-soft: #3b8d8a;
+  --green: #59d98e;
   --amber: #f0b35a;
   --danger: #ef6a67;
 }
@@ -379,7 +380,7 @@ select:focus-visible {
 
 .operator-list button {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  grid-template-columns: 22px minmax(0, 1fr) 36px 18px;
   align-items: center;
   width: 100%;
   min-height: 56px;
@@ -413,6 +414,17 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.operator-list .operator-count {
+  min-width: 25px;
+  padding: 3px 5px;
+  border: 1px solid #314145;
+  color: var(--cyan);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .operator-list strong {
@@ -460,6 +472,35 @@ select:focus-visible {
   min-width: 0;
   align-items: baseline;
   gap: 11px;
+}
+
+.graph-breadcrumbs {
+  overflow: hidden;
+}
+
+.graph-breadcrumbs > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-breadcrumbs button {
+  max-width: 180px;
+  padding: 5px 3px;
+  overflow: hidden;
+  background: transparent;
+  color: var(--muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.graph-breadcrumbs > span:last-child button,
+.graph-breadcrumbs button:hover {
+  color: var(--cyan);
 }
 
 .workspace-bar span,
@@ -615,7 +656,7 @@ select:focus-visible {
   position: relative;
   display: grid;
   width: 212px;
-  height: 100px;
+  height: 116px;
   padding: 11px 13px 10px 16px;
   overflow: hidden;
   border: 1px solid #3a474b;
@@ -630,14 +671,52 @@ select:focus-visible {
   box-shadow: 0 0 0 1px rgba(101, 221, 216, 0.12), 0 6px 20px rgba(0, 0, 0, 0.4);
 }
 
+.graph-node.is-openable {
+  cursor: zoom-in;
+}
+
 .graph-node--input {
-  border-color: #355b5a;
-  background: #0e1818;
+  border-color: #397a55;
+  background: #0d1812;
+}
+
+.graph-node--module {
+  border-color: #44747b;
+  background: #10191b;
+}
+
+.graph-node--group {
+  border-color: #53656a;
+  background: #121719;
 }
 
 .graph-node--output {
   border-color: #705938;
   background: #18140e;
+}
+
+.graph-node.is-cyclic {
+  border-color: #80613a;
+  box-shadow: inset 0 0 0 1px rgba(240, 179, 90, 0.08), 0 5px 18px rgba(0, 0, 0, 0.32);
+}
+
+.graph-node.is-loop-body {
+  border-color: #b17f3f;
+  background: #19150f;
+  box-shadow: 0 0 0 1px rgba(240, 179, 90, 0.12), 0 8px 24px rgba(0, 0, 0, 0.42);
+}
+
+.graph-node.is-cyclic .graph-node__header {
+  color: var(--amber);
+}
+
+.graph-node.is-cyclic .graph-node__rail {
+  background: var(--amber);
+  box-shadow: 0 0 9px rgba(240, 179, 90, 0.55);
+}
+
+.graph-edge--cycle {
+  opacity: 0.95;
 }
 
 .graph-node__rail {
@@ -655,6 +734,11 @@ select:focus-visible {
   box-shadow: 0 0 9px rgba(240, 179, 90, 0.6);
 }
 
+.graph-node--input .graph-node__rail {
+  background: var(--green);
+  box-shadow: 0 0 9px rgba(89, 217, 142, 0.7);
+}
+
 .graph-node__header {
   display: flex;
   align-items: center;
@@ -667,6 +751,103 @@ select:focus-visible {
 
 .graph-node--output .graph-node__header {
   color: var(--amber);
+}
+
+.graph-node--input .graph-node__header {
+  color: var(--green);
+}
+
+.graph-node--input .react-flow__handle {
+  background: var(--green);
+  box-shadow: 0 0 7px rgba(89, 217, 142, 0.7);
+}
+
+.graph-edge--inferred {
+  opacity: 0.9;
+}
+
+.react-flow__node-loopZone {
+  pointer-events: none;
+}
+
+.loop-zone {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed #8b673a;
+  border-radius: 3px;
+  background: rgba(54, 40, 22, 0.22);
+  box-shadow: inset 0 0 32px rgba(240, 179, 90, 0.035);
+}
+
+.loop-zone::before,
+.loop-zone::after {
+  position: absolute;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background: rgba(240, 179, 90, 0.55);
+  content: "";
+}
+
+.loop-zone::before {
+  left: 0;
+}
+
+.loop-zone::after {
+  right: 0;
+}
+
+.loop-zone__header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--amber);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+}
+
+.loop-zone__header strong {
+  font-size: 10px;
+}
+
+.loop-zone__header span {
+  color: #a78e6b;
+}
+
+.loop-zone__entry,
+.loop-zone__exit {
+  position: absolute;
+  top: 42px;
+  color: #a78e6b;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 8px;
+  writing-mode: vertical-rl;
+}
+
+.loop-zone__entry {
+  left: 11px;
+}
+
+.loop-zone__exit {
+  right: 11px;
+}
+
+.feedback-edge__label {
+  position: absolute;
+  padding: 3px 7px;
+  border: 1px solid #71542f;
+  background: #17130d;
+  color: var(--amber);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 8px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .graph-node > strong,
@@ -697,6 +878,24 @@ select:focus-visible {
   line-height: 15px;
 }
 
+.graph-node__types {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  color: #91aeae;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 8px;
+  line-height: 14px;
+}
+
+.graph-node__types span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .loading-screen {
   position: absolute;
   inset: 0;
@@ -711,7 +910,144 @@ select:focus-visible {
 
 .loading-screen strong {
   font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 13px;
+}
+
+.loading-screen > span {
+  width: min(460px, 72vw);
+  overflow: hidden;
+  color: var(--text);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-screen > small {
+  color: var(--muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
+}
+
+.import-progress {
+  position: relative;
+  width: min(460px, 72vw);
+  height: 7px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: #080b0c;
+}
+
+.import-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 4px;
+  background: var(--cyan);
+  box-shadow: 0 0 12px rgba(101, 221, 216, 0.7);
+  transition: width 180ms ease-out;
+}
+
+.import-progress i::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  content: "";
+  animation: progress-scan 1.2s linear infinite;
+}
+
+@keyframes progress-scan {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 5, 6, 0.82);
+}
+
+.memory-dialog {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  width: min(560px, 100%);
+  border: 1px solid #7a4b43;
+  border-left: 3px solid var(--danger);
+  border-radius: 2px;
+  background: #101416;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.memory-dialog__signal {
+  display: grid;
+  place-items: start center;
+  padding-top: 25px;
+  border-right: 1px solid #412c29;
+  color: var(--danger);
+}
+
+.memory-dialog__content {
+  min-width: 0;
+  padding: 22px 24px 18px;
+}
+
+.memory-dialog__content > span {
+  color: var(--danger);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.memory-dialog h2 {
+  margin: 8px 0 12px;
+  color: var(--text);
+  font-size: 21px;
+  font-weight: 650;
+}
+
+.memory-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 21px;
+}
+
+.memory-dialog p strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.memory-dialog__actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--line);
+  background: #0c1012;
+}
+
+.memory-dialog__actions button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: #141a1c;
+  cursor: pointer;
+}
+
+.memory-dialog__actions button:hover {
+  border-color: var(--muted);
+}
+
+.memory-dialog__actions .is-danger {
+  border-color: #98564e;
+  background: #2a1716;
+  color: #ffaaa4;
 }
 
 .spin {
@@ -843,7 +1179,7 @@ select:focus-visible {
 .tensor-list > div {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr);
-  min-height: 36px;
+  min-height: 52px;
   align-items: center;
   border-top: 1px solid #1c2528;
 }
@@ -854,11 +1190,43 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.tensor-list__value {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 7px 0;
+}
+
 .tensor-list code {
   overflow: hidden;
   color: #bdc7ca;
   font-family: "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tensor-list__value small {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dim);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+}
+
+.tensor-list__value small b {
+  overflow: hidden;
+  color: var(--cyan);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tensor-list__value small i {
+  overflow: hidden;
+  font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

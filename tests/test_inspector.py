@@ -4,19 +4,29 @@ import bz2
 import gzip
 import json
 import lzma
+import os
 import tarfile
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import BytesIO, StringIO
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import py7zr
 from onnx import TensorProto, helper
 
 from torch_to_vulcan.cli import main
-from torch_to_vulcan.importer import inspect_archive, inspect_path
+from torch_to_vulcan.importer import (
+    InspectionError,
+    MemoryConfirmationRequired,
+    inspect_archive,
+    inspect_path,
+    source_format,
+    supported_input_suffixes,
+)
 
 
 def make_unary_model(op_type: str, *, graph_name: str) -> bytes:
@@ -135,6 +145,41 @@ class OnnxInspectorTests(unittest.TestCase):
         self.assertEqual(len(report.models), 1)
         self.assertEqual(report.models[0].path, "relu.onnx")
         self.assertEqual(report.operator_summary[0].op_type, "Relu")
+        values = {value.name: value for value in report.models[0].graphs[0].values}
+        self.assertEqual(values["input"].data_type, "FLOAT")
+        self.assertEqual(values["input"].shape, ("1", "4"))
+        self.assertEqual(values["output"].data_type, "FLOAT")
+
+    def test_reports_tensor_values_for_each_nested_graph(self) -> None:
+        path = self.temporary_path("conditional.onnx")
+        path.write_bytes(make_if_model())
+
+        report = inspect_path(path)
+
+        values_by_graph = {
+            graph.path: {value.name: value for value in graph.values}
+            for graph in report.models[0].graphs
+        }
+        self.assertEqual(values_by_graph["conditional"]["condition"].data_type, "BOOL")
+        then_values = next(
+            values for path, values in values_by_graph.items() if path.endswith("then_branch")
+        )
+        self.assertEqual(then_values["then_y"].data_type, "FLOAT")
+        self.assertEqual(then_values["then_y"].shape, ("1",))
+
+    def test_requires_confirmation_above_memory_warning_threshold(self) -> None:
+        path = self.temporary_path("large.onnx")
+        path.write_bytes(make_unary_model("Relu", graph_name="large"))
+
+        with patch(
+            "torch_to_vulcan.importer.inspector.psutil.virtual_memory",
+            return_value=SimpleNamespace(available=1),
+        ):
+            with self.assertRaises(MemoryConfirmationRequired):
+                inspect_path(path)
+            report = inspect_path(path, confirm_large_model=True)
+
+        self.assertEqual(report.models[0].graph_name, "large")
 
     def test_inspects_tar_gz_archives(self) -> None:
         path = self.temporary_path("models.tar.gz")
@@ -162,6 +207,55 @@ class OnnxInspectorTests(unittest.TestCase):
         self.assertEqual(report.source_type, "7z")
         self.assertEqual(report.models[0].path, "models/relu.onnx")
         self.assertEqual(report.operator_summary[0].op_type, "Relu")
+
+    def test_recognizes_rar_archives(self) -> None:
+        path = self.temporary_path("models.RAR")
+
+        self.assertIn(".rar", supported_input_suffixes())
+        self.assertEqual(source_format(path), "rar")
+
+    @unittest.skipUnless(os.name == "nt", "bundled UnRAR fixture targets Windows x64")
+    def test_inspects_rar_archives_with_bundled_decoder(self) -> None:
+        path = Path(__file__).parent / "fixtures" / "relu.rar"
+
+        report = inspect_path(path)
+
+        self.assertEqual(report.source_type, "rar")
+        self.assertEqual(report.models[0].path, "live.onnx")
+        self.assertEqual(report.operator_summary[0].op_type, "Relu")
+
+    @unittest.skipUnless(os.name == "nt", "Windows process isolation behavior")
+    def test_retries_unrar_after_a_console_control_interrupt(self) -> None:
+        from torch_to_vulcan.importer import inspector
+
+        interrupted = SimpleNamespace(returncode=0xC000013A, stderr=b"")
+        completed = SimpleNamespace(returncode=0, stderr=b"")
+        with patch.object(
+            inspector.subprocess,
+            "run",
+            side_effect=[interrupted, completed],
+        ) as run:
+            inspector._extract_rar_models(Path("models.rar"), Path("output"))
+
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(
+            run.call_args.kwargs["creationflags"] & inspector.subprocess.CREATE_NO_WINDOW
+        )
+
+    @unittest.skipUnless(os.name == "nt", "bundled UnRAR fixture targets Windows x64")
+    def test_preserves_unrar_extraction_error_classification(self) -> None:
+        path = Path(__file__).parent / "fixtures" / "relu.rar"
+        failed = SimpleNamespace(returncode=2, stderr=b"decoder failure")
+
+        with patch(
+            "torch_to_vulcan.importer.inspector.subprocess.run",
+            return_value=failed,
+        ):
+            with self.assertRaisesRegex(
+                InspectionError,
+                r"^UnRAR extraction failed with exit code 2",
+            ):
+                inspect_path(path)
 
     def test_inspects_compressed_onnx_files(self) -> None:
         model = make_unary_model("Neg", graph_name="compressed_neg")

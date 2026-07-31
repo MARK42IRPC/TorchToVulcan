@@ -13,7 +13,7 @@ fi
 
 health() {
   curl --silent --fail --max-time 2 "http://127.0.0.1:$1/api/health" 2>/dev/null | \
-    grep -q '"api_version":"0.2"'
+    grep -q '"api_version":"0.3"'
 }
 
 port_in_use() {

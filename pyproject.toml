@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 authors = []
 dependencies = [
     "onnx>=1.16,<2",
+    "psutil>=6,<8",
     "py7zr>=0.22,<1",
+    "rarfile>=4.2,<5",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +32,9 @@ ttv = "torch_to_vulcan.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+torch_to_vulcan = ["vendor/**/*"]
 
 [tool.ruff]
 line-length = 100

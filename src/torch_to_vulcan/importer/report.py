@@ -25,11 +25,19 @@ class OperatorReport:
 
 
 @dataclass(frozen=True, slots=True)
+class TensorValueReport:
+    name: str
+    data_type: str
+    shape: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class GraphReport:
     path: str
     name: str
     inputs: tuple[str, ...]
     outputs: tuple[str, ...]
+    values: tuple[TensorValueReport, ...]
     operators: tuple[OperatorReport, ...]
 
 

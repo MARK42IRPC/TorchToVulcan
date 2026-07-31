@@ -11,15 +11,18 @@ Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节
 ### 当前能力
 
 - 直接导入 `.onnx`，以及 `.onnx.gz/.bz2/.xz` 单文件压缩模型；
-- 导入 ZIP、7z、TAR、TGZ、TBZ2、TXZ 等归档并递归发现其中的 ONNX 模型；
+- 导入 ZIP、RAR、7z、TAR、TGZ、TBZ2、TXZ 等归档并递归发现其中的 ONNX 模型；
 - 识别主图与嵌套子图中的算子；
 - 在 WebUI 中浏览模型、算子、输入输出节点和 Tensor 连线；
+- 导入时显示归档扫描、解压和逐模型解析进度；
+- 当模型估算大小超过当前可用内存的 60% 时，要求用户明确确认后继续；
 - 输出适合 WebUI 或其他工具消费的 JSON 检查报告；
 - 版本化 Graph IR 与编译模型包 Schema；
 - Python Graph IR 数据结构、跨对象校验和测试。
 
 `ckpt`、`pth` 和其他 Torch 容器格式计划通过独立的安全适配器接入，目前尚未实现。
-RAR 目前也未启用，因为跨平台解析需要额外的 `unrar` 或 `bsdtar` 程序。
+Windows x64 版内置 UnRAR 解码器，可开箱导入 RAR；其他平台可通过
+`TTV_UNRAR` 指定 `unrar` 路径，或将其安装到 `PATH`。
 
 ### 技术栈
 
@@ -72,6 +75,7 @@ WebUI 默认运行在 `http://127.0.0.1:5173`，API 默认运行在 `http://127.
 .venv\Scripts\ttv inspect path\to\models.zip
 .venv\Scripts\ttv inspect path\to\models.tar.gz
 .venv\Scripts\ttv inspect path\to\models.7z
+.venv\Scripts\ttv inspect path\to\models.rar
 .venv\Scripts\ttv inspect path\to\models.zip --summary-only
 .venv\Scripts\ttv inspect path\to\models.zip --json
 ```
@@ -80,7 +84,9 @@ WebUI 默认运行在 `http://127.0.0.1:5173`，API 默认运行在 `http://127.
 
 ```powershell
 .venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web test
 npm --prefix web run build
+npm --prefix web run test:e2e
 ```
 
 ### 仓库结构
@@ -106,15 +112,18 @@ Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. It combines a node-
 ### Current capabilities
 
 - import direct `.onnx` files and `.onnx.gz/.bz2/.xz` compressed models;
-- import ZIP, 7z, TAR, TGZ, TBZ2, and TXZ archives and recursively discover ONNX models;
+- import ZIP, RAR, 7z, TAR, TGZ, TBZ2, and TXZ archives and recursively discover ONNX models;
 - inspect operators in root graphs and nested subgraphs;
 - browse models, operators, graph inputs/outputs, and tensor connections in the Web UI;
+- show archive scanning, extraction, and per-model parsing progress during import;
+- request explicit confirmation when a model estimate exceeds 60% of currently available memory;
 - emit machine-readable JSON inspection reports;
 - maintain versioned Graph IR and compiled-package schemas;
 - validate compiler-side Graph IR structures and cross-object invariants.
 
 `ckpt`, `pth`, and other Torch container formats are planned as separate security-aware source adapters and are not implemented yet.
-RAR is also deferred because cross-platform parsing requires an external `unrar` or `bsdtar` executable.
+An UnRAR decoder is bundled for Windows x64, so RAR imports work out of the
+box. On other platforms, set `TTV_UNRAR` or install `unrar` on `PATH`.
 
 ### Technology stack
 
@@ -167,6 +176,7 @@ The Web UI defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.
 .venv\Scripts\ttv inspect path\to\models.zip
 .venv\Scripts\ttv inspect path\to\models.tar.gz
 .venv\Scripts\ttv inspect path\to\models.7z
+.venv\Scripts\ttv inspect path\to\models.rar
 .venv\Scripts\ttv inspect path\to\models.zip --summary-only
 .venv\Scripts\ttv inspect path\to\models.zip --json
 ```
@@ -175,7 +185,9 @@ The Web UI defaults to `http://127.0.0.1:5173`; the API defaults to `http://127.
 
 ```powershell
 .venv\Scripts\python -m unittest discover -s tests -v
+npm --prefix web test
 npm --prefix web run build
+npm --prefix web run test:e2e
 ```
 
 ### Repository layout

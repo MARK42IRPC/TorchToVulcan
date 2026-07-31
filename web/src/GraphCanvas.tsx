@@ -10,22 +10,30 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  type EdgeTypes,
   type NodeTypes,
 } from "@xyflow/react";
 
-import { buildGraph, type CanvasNode } from "./graph";
+import { FeedbackEdge } from "./FeedbackEdge";
+import type { BuiltGraph, CanvasNode } from "./graph";
 import { GraphNode } from "./GraphNode";
-import type { CanvasNodeData, GraphReport } from "./types";
+import { LoopZone } from "./LoopZone";
+import type { CanvasNodeData } from "./types";
 
-const nodeTypes: NodeTypes = { inspector: GraphNode };
+const nodeTypes: NodeTypes = { inspector: GraphNode, loopZone: LoopZone };
+const edgeTypes: EdgeTypes = { feedback: FeedbackEdge };
 
 interface GraphCanvasProps {
-  graph: GraphReport | null;
+  content: BuiltGraph | null;
   onSelectNode: (node: CanvasNodeData | null) => void;
+  onOpenNode: (node: CanvasNodeData) => void;
 }
 
-function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
-  const initial = useMemo(() => (graph ? buildGraph(graph) : { nodes: [], edges: [] }), [graph]);
+function GraphCanvasInner({ content, onSelectNode, onOpenNode }: GraphCanvasProps) {
+  const initial = useMemo(
+    () => content ?? { nodes: [], edges: [] },
+    [content],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const { fitView, zoomIn, zoomOut } = useReactFlow();
@@ -34,7 +42,7 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
       fitView({
         padding: 0.14,
         duration,
-        minZoom: window.innerWidth <= 700 ? 0.32 : 0.52,
+        minZoom: window.innerWidth <= 700 ? 0.08 : 0.12,
         maxZoom: 1,
       }),
     [fitView],
@@ -43,11 +51,10 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
   useEffect(() => {
     setNodes(initial.nodes);
     setEdges(initial.edges);
-    onSelectNode(null);
     window.setTimeout(() => void fitGraph(), 0);
-  }, [fitGraph, initial, onSelectNode, setEdges, setNodes]);
+  }, [fitGraph, initial, setEdges, setNodes]);
 
-  if (!graph) {
+  if (!content) {
     return (
       <div className="canvas-empty">
         <div className="canvas-empty__mark" aria-hidden="true" />
@@ -62,17 +69,19 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      edgeTypes={edgeTypes}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={(_, node) => onSelectNode(node.data)}
+      onNodeDoubleClick={(_, node) => onOpenNode(node.data)}
       onPaneClick={() => onSelectNode(null)}
       nodesConnectable={false}
-      minZoom={0.25}
+      minZoom={0.06}
       maxZoom={2}
       fitView
       fitViewOptions={{
         padding: 0.14,
-        minZoom: window.innerWidth <= 700 ? 0.32 : 0.52,
+        minZoom: window.innerWidth <= 700 ? 0.08 : 0.12,
         maxZoom: 1,
       }}
       colorMode="dark"
@@ -84,7 +93,7 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
         zoomable
         nodeColor={(node) => {
           const kind = (node.data as CanvasNodeData).kind;
-          return kind === "output" ? "#ba8b43" : kind === "input" ? "#497c7b" : "#62d8d3";
+          return kind === "output" ? "#ba8b43" : kind === "input" ? "#59d98e" : "#62d8d3";
         }}
         maskColor="rgba(5, 8, 9, 0.78)"
       />
