@@ -4,8 +4,8 @@ import type { CanvasNodeData, GraphReport } from "./types";
 
 export type CanvasNode = Node<CanvasNodeData, "inspector">;
 
-const COLUMN_WIDTH = 244;
-const ROW_HEIGHT = 126;
+const COLUMN_WIDTH = 250;
+const ROW_HEIGHT = 142;
 
 function inputNodeId(graphPath: string, tensor: string): string {
   return `input:${graphPath}:${tensor}`;
@@ -112,20 +112,40 @@ export function buildGraph(graph: GraphReport): { nodes: CanvasNode[]; edges: Ed
     }
   });
 
+  const maxColumns = typeof window !== "undefined" && window.innerWidth <= 700 ? 2 : 4;
   const rowsByDepth = new Map<number, number>();
-  const positionedNodes = nodes.map((node) => {
+  const rowsForLane = new Map<number, number>();
+  const nodeRows = new Map<string, number>();
+
+  nodes.forEach((node) => {
     const depth = nodeDepth.get(node.id) ?? 0;
     const row = rowsByDepth.get(depth) ?? 0;
     rowsByDepth.set(depth, row + 1);
+    nodeRows.set(node.id, row);
+    const lane = Math.floor(depth / maxColumns);
+    rowsForLane.set(lane, Math.max(rowsForLane.get(lane) ?? 0, row + 1));
+  });
+
+  const laneOffsets = new Map<number, number>();
+  let laneOffset = 0;
+  for (const lane of [...rowsForLane.keys()].sort((left, right) => left - right)) {
+    laneOffsets.set(lane, laneOffset);
+    laneOffset += (rowsForLane.get(lane) ?? 1) * ROW_HEIGHT + 54;
+  }
+
+  const positionedNodes = nodes.map((node) => {
+    const depth = nodeDepth.get(node.id) ?? 0;
+    const lane = Math.floor(depth / maxColumns);
+    const depthInLane = depth % maxColumns;
+    const column = lane % 2 === 0 ? depthInLane : maxColumns - 1 - depthInLane;
     return {
       ...node,
       position: {
-        x: 72 + depth * COLUMN_WIDTH,
-        y: 72 + row * ROW_HEIGHT,
+        x: 72 + column * COLUMN_WIDTH,
+        y: 72 + (laneOffsets.get(lane) ?? 0) + (nodeRows.get(node.id) ?? 0) * ROW_HEIGHT,
       },
     };
   });
 
   return { nodes: positionedNodes, edges };
 }
-

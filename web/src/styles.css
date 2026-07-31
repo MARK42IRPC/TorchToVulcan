@@ -57,8 +57,8 @@ select:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 276px minmax(420px, 1fr) 316px;
-  grid-template-rows: 54px minmax(0, 1fr) 29px;
+  grid-template-columns: 290px minmax(420px, 1fr) 330px;
+  grid-template-rows: 62px minmax(0, 1fr) 32px;
   width: 100%;
   height: 100dvh;
   overflow: hidden;
@@ -73,7 +73,7 @@ select:focus-visible {
   align-items: center;
   gap: 18px;
   min-width: 0;
-  padding: 0 14px 0 16px;
+  padding: 0 16px 0 18px;
   border-bottom: 1px solid var(--line-strong);
   background: #090c0d;
 }
@@ -93,12 +93,12 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 11px;
-  min-width: 238px;
+  min-width: 260px;
 }
 
 .brand-mark {
   width: 7px;
-  height: 28px;
+  height: 34px;
   border: 1px solid var(--cyan);
   background: #153332;
   box-shadow: 0 0 10px rgba(101, 221, 216, 0.45);
@@ -112,16 +112,16 @@ select:focus-visible {
 .brand-block strong {
   color: #f5f8f8;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 16px;
+  line-height: 19px;
 }
 
 .brand-block span {
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
-  line-height: 11px;
+  font-size: 10px;
+  line-height: 13px;
 }
 
 .topbar__signal {
@@ -131,7 +131,7 @@ select:focus-visible {
   margin-left: auto;
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .signal-dot {
@@ -143,8 +143,8 @@ select:focus-visible {
 
 .icon-command {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border: 1px solid var(--line-strong);
   border-radius: 2px;
@@ -192,27 +192,27 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 33px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 14px;
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .section-heading b {
   color: var(--cyan);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .upload-tool {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: 66px;
-  margin: 0 10px 10px;
-  padding: 9px 8px 9px 10px;
+  min-height: 80px;
+  margin: 0 12px 12px;
+  padding: 11px 10px 11px 12px;
   border: 1px solid var(--line-strong);
   border-left: 2px solid var(--cyan-soft);
   border-radius: 2px;
@@ -243,24 +243,24 @@ select:focus-visible {
 }
 
 .upload-tool__copy strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .upload-tool__copy span {
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
 .upload-tool button {
-  height: 28px;
-  padding: 0 9px;
+  height: 32px;
+  padding: 0 11px;
   border: 1px solid var(--cyan-soft);
   border-radius: 2px;
   background: #142322;
   color: var(--cyan);
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -277,8 +277,8 @@ select:focus-visible {
   border-left: 2px solid var(--danger);
   background: #211313;
   color: #efadab;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 17px;
 }
 
 .inline-error span {
@@ -298,18 +298,18 @@ select:focus-visible {
 }
 
 .model-list {
-  max-height: 112px;
-  padding-bottom: 6px;
+  max-height: 132px;
+  padding-bottom: 8px;
   overflow: auto;
 }
 
 .model-list button {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   width: 100%;
-  min-height: 32px;
-  padding: 0 11px;
+  min-height: 40px;
+  padding: 0 13px;
   border-left: 2px solid transparent;
   background: transparent;
   color: var(--muted);
@@ -329,7 +329,7 @@ select:focus-visible {
 
 .model-list button span {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -337,16 +337,16 @@ select:focus-visible {
 .model-list button b {
   color: var(--cyan);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .search-box {
   display: flex;
-  flex: 0 0 31px;
+  flex: 0 0 36px;
   align-items: center;
   gap: 7px;
-  margin: 0 10px 7px;
-  padding: 0 8px;
+  margin: 0 12px 9px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   background: #090d0e;
   color: var(--dim);
@@ -364,7 +364,7 @@ select:focus-visible {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .search-box input::placeholder {
@@ -379,11 +379,11 @@ select:focus-visible {
 
 .operator-list button {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
   align-items: center;
   width: 100%;
-  min-height: 46px;
-  padding: 5px 9px 5px 11px;
+  min-height: 56px;
+  padding: 7px 11px 7px 13px;
   border-top: 1px solid #151c1f;
   border-left: 2px solid transparent;
   background: transparent;
@@ -418,12 +418,12 @@ select:focus-visible {
 .operator-list strong {
   color: inherit;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .operator-list small {
   color: var(--dim);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .list-empty {
@@ -431,13 +431,13 @@ select:focus-visible {
   padding: 12px;
   color: var(--dim);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 10px;
   text-align: center;
 }
 
 .workspace {
   display: grid;
-  grid-template-rows: 45px minmax(0, 1fr);
+  grid-template-rows: 52px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -450,7 +450,7 @@ select:focus-visible {
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  padding: 0 12px 0 16px;
+  padding: 0 14px 0 18px;
   border-bottom: 1px solid var(--line);
   background: #0b0f10;
 }
@@ -469,14 +469,14 @@ select:focus-visible {
 
 .workspace-bar span {
   color: var(--cyan);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .workspace-bar strong {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -493,14 +493,14 @@ select:focus-visible {
 .graph-select select {
   width: 100%;
   min-width: 0;
-  height: 27px;
-  padding: 0 26px 0 8px;
+  height: 32px;
+  padding: 0 28px 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 2px;
   background: #101517;
   color: var(--text);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .canvas-frame {
@@ -547,8 +547,8 @@ select:focus-visible {
 }
 
 .canvas-empty__mark {
-  width: 52px;
-  height: 52px;
+  width: 64px;
+  height: 64px;
   margin-bottom: 16px;
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--cyan-soft);
@@ -558,14 +558,14 @@ select:focus-visible {
 
 .canvas-empty strong {
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .canvas-empty span {
   margin-top: 6px;
   color: #3e494d;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .canvas-tools {
@@ -578,8 +578,8 @@ select:focus-visible {
 
 .canvas-tools button {
   display: grid;
-  width: 30px;
-  height: 29px;
+  width: 34px;
+  height: 33px;
   place-items: center;
   border-right: 1px solid var(--line);
   background: transparent;
@@ -604,8 +604,8 @@ select:focus-visible {
 }
 
 .react-flow__handle {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border: 1px solid #0b1011;
   background: var(--cyan);
   box-shadow: 0 0 7px rgba(101, 221, 216, 0.7);
@@ -614,9 +614,9 @@ select:focus-visible {
 .graph-node {
   position: relative;
   display: grid;
-  width: 190px;
-  height: 84px;
-  padding: 9px 11px 8px 14px;
+  width: 212px;
+  height: 100px;
+  padding: 11px 13px 10px 16px;
   overflow: hidden;
   border: 1px solid #3a474b;
   border-radius: 3px;
@@ -661,8 +661,8 @@ select:focus-visible {
   gap: 5px;
   color: var(--cyan);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
-  line-height: 13px;
+  font-size: 9px;
+  line-height: 15px;
 }
 
 .graph-node--output .graph-node__header {
@@ -678,14 +678,14 @@ select:focus-visible {
 
 .graph-node > strong {
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .graph-node__subtitle {
   color: var(--muted);
-  font-size: 9px;
-  line-height: 13px;
+  font-size: 10px;
+  line-height: 15px;
 }
 
 .graph-node__ports {
@@ -693,8 +693,8 @@ select:focus-visible {
   justify-content: space-between;
   color: var(--dim);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
-  line-height: 13px;
+  font-size: 9px;
+  line-height: 15px;
 }
 
 .loading-screen {
@@ -711,7 +711,7 @@ select:focus-visible {
 
 .loading-screen strong {
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .spin {
@@ -739,7 +739,7 @@ select:focus-visible {
   overflow: hidden;
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 11px;
+  font-size: 13px;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -754,8 +754,8 @@ select:focus-visible {
 .inspector-empty dl div,
 .property-list div {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  min-height: 34px;
+  grid-template-columns: 82px minmax(0, 1fr);
+  min-height: 40px;
   align-items: center;
   border-top: 1px solid var(--line);
 }
@@ -764,7 +764,7 @@ select:focus-visible {
 .property-list dt {
   color: var(--dim);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .inspector-empty dd,
@@ -774,7 +774,7 @@ select:focus-visible {
   overflow: hidden;
   color: var(--text);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 11px;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -809,13 +809,13 @@ select:focus-visible {
 .node-detail__title small {
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .node-detail__title strong {
   overflow-wrap: anywhere;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 17px;
+  font-size: 20px;
 }
 
 .property-list .pending {
@@ -833,7 +833,7 @@ select:focus-visible {
   margin: 0 0 7px;
   color: var(--muted);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .tensor-list h3 b {
@@ -842,8 +842,8 @@ select:focus-visible {
 
 .tensor-list > div {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  min-height: 30px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  min-height: 36px;
   align-items: center;
   border-top: 1px solid #1c2528;
 }
@@ -851,14 +851,14 @@ select:focus-visible {
 .tensor-list > div > span {
   color: var(--dim);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .tensor-list code {
   overflow: hidden;
   color: #bdc7ca;
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -873,7 +873,7 @@ select:focus-visible {
   background: #090c0d;
   color: var(--dim);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .statusbar span:first-child {
@@ -920,14 +920,14 @@ select:focus-visible {
 
 @media (max-width: 1080px) {
   .app-shell {
-    grid-template-columns: 236px minmax(380px, 1fr);
-    grid-template-rows: 54px minmax(420px, 1fr) 230px 29px;
+    grid-template-columns: 252px minmax(380px, 1fr);
+    grid-template-rows: 62px minmax(420px, 1fr) 250px 32px;
   }
 
   .inspector {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 236px minmax(0, 1fr);
+    grid-template-columns: 252px minmax(0, 1fr);
     border-top: 1px solid var(--line);
     border-left: 0;
   }
@@ -991,7 +991,7 @@ select:focus-visible {
 
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 54px 300px 480px auto 29px;
+    grid-template-rows: 62px 340px 520px auto 32px;
     height: auto;
     min-height: 100dvh;
     overflow: visible;
@@ -1042,7 +1042,7 @@ select:focus-visible {
   }
 
   .inspector > .section-heading {
-    height: 33px;
+    height: 38px;
     padding-top: 0;
     border-right: 0;
   }
@@ -1079,6 +1079,10 @@ select:focus-visible {
 
   .workspace-bar > div > span,
   .graph-select > span {
+    display: none;
+  }
+
+  .react-flow__minimap {
     display: none;
   }
 }

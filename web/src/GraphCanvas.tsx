@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Focus, Minus, Plus } from "lucide-react";
 import {
   Background,
@@ -29,13 +29,23 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
   const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const fitGraph = useCallback(
+    (duration = 250) =>
+      fitView({
+        padding: 0.14,
+        duration,
+        minZoom: window.innerWidth <= 700 ? 0.32 : 0.52,
+        maxZoom: 1,
+      }),
+    [fitView],
+  );
 
   useEffect(() => {
     setNodes(initial.nodes);
     setEdges(initial.edges);
     onSelectNode(null);
-    window.setTimeout(() => void fitView({ padding: 0.18, duration: 250 }), 0);
-  }, [fitView, initial, onSelectNode, setEdges, setNodes]);
+    window.setTimeout(() => void fitGraph(), 0);
+  }, [fitGraph, initial, onSelectNode, setEdges, setNodes]);
 
   if (!graph) {
     return (
@@ -57,10 +67,14 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
       onNodeClick={(_, node) => onSelectNode(node.data)}
       onPaneClick={() => onSelectNode(null)}
       nodesConnectable={false}
-      minZoom={0.2}
+      minZoom={0.25}
       maxZoom={2}
       fitView
-      fitViewOptions={{ padding: 0.18 }}
+      fitViewOptions={{
+        padding: 0.14,
+        minZoom: window.innerWidth <= 700 ? 0.32 : 0.52,
+        maxZoom: 1,
+      }}
       colorMode="dark"
       proOptions={{ hideAttribution: true }}
     >
@@ -76,18 +90,18 @@ function GraphCanvasInner({ graph, onSelectNode }: GraphCanvasProps) {
       />
       <Panel position="top-right" className="canvas-tools">
         <button type="button" title="放大" aria-label="放大" onClick={() => void zoomIn()}>
-          <Plus size={16} />
+          <Plus size={18} />
         </button>
         <button type="button" title="缩小" aria-label="缩小" onClick={() => void zoomOut()}>
-          <Minus size={16} />
+          <Minus size={18} />
         </button>
         <button
           type="button"
           title="适应画布"
           aria-label="适应画布"
-          onClick={() => void fitView({ padding: 0.18, duration: 250 })}
+          onClick={() => void fitGraph()}
         >
-          <Focus size={16} />
+          <Focus size={18} />
         </button>
       </Panel>
     </ReactFlow>
@@ -101,4 +115,3 @@ export function GraphCanvas(props: GraphCanvasProps) {
     </ReactFlowProvider>
   );
 }
-
