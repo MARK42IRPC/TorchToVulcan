@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "model": {
+    "name": "relu_example",
+    "producer_name": "torch-to-vulcan",
+    "producer_version": "0.1.0",
+    "source_format": "onnx",
+    "source_ir_version": 10
+  },
+  "opsets": [
+    {
+      "domain": "",
+      "version": 18
+    }
+  ],
+  "inputs": ["input"],
+  "outputs": ["output"],
+  "tensors": {
+    "input": {
+      "dtype": "float32",
+      "shape": [1, 3, 224, 224],
+      "layout": "NCHW"
+    },
+    "output": {
+      "dtype": "float32",
+      "shape": [1, 3, 224, 224],
+      "layout": "NCHW"
+    }
+  },
+  "nodes": [
+    {
+      "id": "relu_0",
+      "name": "features/relu",
+      "op_type": "Relu",
+      "domain": "",
+      "inputs": ["input"],
+      "outputs": ["output"],
+      "attributes": {}
+    }
+  ],
+  "ui": {
+    "nodes": {
+      "relu_0": {
+        "x": 320,
+        "y": 180,
+        "collapsed": false
+      }
+    },
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  }
+}
+

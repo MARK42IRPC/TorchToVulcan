@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://torch-to-vulcan.dev/schemas/graph-ir.schema.json",
+  "title": "Torch to Vulcan Graph IR",
+  "description": "Language-neutral semantic graph exchanged by the importer, Web UI, and compiler.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model",
+    "opsets",
+    "inputs",
+    "outputs",
+    "tensors",
+    "nodes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "model": {
+      "$ref": "#/$defs/model"
+    },
+    "opsets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/opset"
+      }
+    },
+    "inputs": {
+      "$ref": "#/$defs/tensorIdList"
+    },
+    "outputs": {
+      "$ref": "#/$defs/tensorIdList"
+    },
+    "tensors": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/tensor"
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "ui": {
+      "$ref": "#/$defs/uiState"
+    },
+    "metadata": {
+      "$ref": "#/$defs/stringMap"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "model": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producer_name": {
+          "type": "string"
+        },
+        "producer_version": {
+          "type": "string"
+        },
+        "source_format": {
+          "type": "string",
+          "default": "onnx"
+        },
+        "source_ir_version": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "opset": {
+      "type": "object",
+      "required": ["domain", "version"],
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "dimension": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dataRef": {
+      "type": "object",
+      "required": ["uri", "offset", "length"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "quantization": {
+      "type": "object",
+      "required": ["scheme", "scale", "zero_point"],
+      "properties": {
+        "scheme": {
+          "enum": ["per_tensor", "per_channel"]
+        },
+        "scale": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "array", "items": { "type": "number" }, "minItems": 1 }
+          ]
+        },
+        "zero_point": {
+          "oneOf": [
+            { "type": "integer" },
+            { "type": "array", "items": { "type": "integer" }, "minItems": 1 }
+          ]
+        },
+        "axis": {
+          "type": ["integer", "null"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tensor": {
+      "type": "object",
+      "required": ["dtype", "shape", "layout"],
+      "properties": {
+        "dtype": {
+          "enum": [
+            "bool",
+            "bfloat16",
+            "float16",
+            "float32",
+            "float64",
+            "int8",
+            "uint8",
+            "int16",
+            "uint16",
+            "int32",
+            "uint32",
+            "int64",
+            "uint64"
+          ]
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dimension"
+          }
+        },
+        "layout": {
+          "type": "string",
+          "minLength": 1
+        },
+        "data": {
+          "$ref": "#/$defs/dataRef"
+        },
+        "quantization": {
+          "$ref": "#/$defs/quantization"
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "attributeValue": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "integer" },
+        { "type": "number" },
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attributeValue"
+          }
+        }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "op_type", "domain", "inputs", "outputs", "attributes"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "name": {
+          "type": "string"
+        },
+        "op_type": {
+          "$ref": "#/$defs/identifier"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/identifier" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "outputs": {
+          "$ref": "#/$defs/tensorIdList"
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/attributeValue"
+          }
+        },
+        "metadata": {
+          "$ref": "#/$defs/stringMap"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tensorIdList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/identifier"
+      },
+      "uniqueItems": true
+    },
+    "nodeUiState": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "collapsed": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "uiState": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/nodeUiState"
+          }
+        },
+        "viewport": {
+          "type": "object",
+          "required": ["x", "y", "zoom"],
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "zoom": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+# Development
+
+## Prerequisites
+
+- Git 2.28 or later;
+- Python 3.11 or later;
+- PowerShell 7, Bash, or another shell capable of invoking Python;
+- a virtual environment is recommended.
+
+Node.js, ONNX, Torch, Zig, the Vulkan SDK, and shader compiler dependencies are
+intentionally deferred until the component that needs each tool is introduced.
+
+## Setup
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+Run the tests and validate the example contract:
+
+```powershell
+py -3.11 -m unittest discover -s tests -v
+py -3.11 -m torch_to_vulcan validate examples/relu.graph.json
+```
+
+On Unix-like systems, replace `py -3.11` with `python3`.
+
+## Working agreements
+
+1. Treat JSON Schema as the cross-language contract and update it before or
+   with language-specific types.
+2. Add a migration whenever a persisted Graph IR document changes
+   incompatibly.
+3. Keep Graph IR independent of React, ONNX, Torch, HTTP, and Vulkan types.
+4. Put operator semantics in registry definitions, not in route handlers or UI
+   components.
+5. Accompany each compiler pass with focused unit tests and at least one graph
+   fixture.
+6. Validate generated SPIR-V and compare kernel output against a reference
+   implementation before declaring an operator supported.
+
+## Branch and commit convention
+
+Use short topic branches such as `feature/onnx-import` or
+`fix/transpose-shape`. Commits should describe one coherent behavior change.
+Conventional Commits are recommended but not currently enforced:
+
+```text
+feat(ir): add symbolic dimensions
+fix(import): preserve optional ONNX inputs
+docs: describe kernel registration
+```
+
+## Adding an operator
+
+An operator is not considered supported until it has:
+
+1. ONNX normalization rules for the supported opset range;
+2. shape and type inference;
+3. a Torch or independent CPU reference implementation;
+4. at least one Vulkan kernel candidate and capability declaration;
+5. normal, edge-shape, and invalid-input tests;
+6. GPU/reference numerical comparison with documented tolerances.
+
+The UI support indicator must be derived from the compiler registry rather than
+maintained as a separate hard-coded list.
+
+## Generated files
+
+Do not commit imported ONNX models, SPIR-V binaries, compiled model packages, or
+large generated weights unless they are intentionally added as small test
+fixtures. The default `.gitignore` excludes these artifacts.

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://torch-to-vulcan.dev/schemas/model-package.schema.json",
+  "title": "Torch to Vulcan compiled model manifest",
+  "description": "Initial manifest contract for a Vulkan runtime package. Binary payloads are stored beside this manifest.",
+  "type": "object",
+  "required": [
+    "format_version",
+    "graph_schema_version",
+    "model_name",
+    "target",
+    "bindings",
+    "blobs",
+    "shaders",
+    "pipelines",
+    "dispatches"
+  ],
+  "properties": {
+    "format_version": { "const": "1.0" },
+    "graph_schema_version": { "const": "1.0" },
+    "model_name": { "type": "string", "minLength": 1 },
+    "target": {
+      "type": "object",
+      "required": ["vulkan_api_version", "required_features"],
+      "properties": {
+        "vulkan_api_version": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+        "required_features": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "required": ["inputs", "outputs"],
+      "properties": {
+        "inputs": { "$ref": "#/$defs/tensorBindings" },
+        "outputs": { "$ref": "#/$defs/tensorBindings" }
+      },
+      "additionalProperties": false
+    },
+    "blobs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/blob" }
+    },
+    "shaders": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/shader" }
+    },
+    "pipelines": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pipeline" }
+    },
+    "dispatches": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/dispatch" }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tensorBinding": {
+      "type": "object",
+      "required": ["tensor_id", "slot"],
+      "properties": {
+        "tensor_id": { "type": "string", "minLength": 1 },
+        "slot": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tensorBindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tensorBinding" }
+    },
+    "blob": {
+      "type": "object",
+      "required": ["id", "file", "offset", "length", "alignment"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 0 },
+        "alignment": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "shader": {
+      "type": "object",
+      "required": ["id", "file", "entry_point", "sha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "entry_point": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "pipeline": {
+      "type": "object",
+      "required": ["id", "shader_id", "descriptor_layout"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "shader_id": { "type": "string", "minLength": 1 },
+        "descriptor_layout": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["binding", "kind"],
+            "properties": {
+              "binding": { "type": "integer", "minimum": 0 },
+              "kind": { "enum": ["storage_buffer", "uniform_buffer", "storage_image"] }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "dispatch": {
+      "type": "object",
+      "required": ["node_id", "pipeline_id", "workgroups", "resources"],
+      "properties": {
+        "node_id": { "type": "string", "minLength": 1 },
+        "pipeline_id": { "type": "string", "minLength": 1 },
+        "workgroups": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "integer", "minimum": 1 },
+            { "type": "integer", "minimum": 1 }
+          ],
+          "items": false
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["binding", "tensor_id"],
+            "properties": {
+              "binding": { "type": "integer", "minimum": 0 },
+              "tensor_id": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
+
