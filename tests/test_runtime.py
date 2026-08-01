@@ -73,6 +73,148 @@ def make_matmul_model():
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
 
 
+def make_batched_matmul_model():
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 2])
+    weight = helper.make_tensor(
+        "weight",
+        TensorProto.FLOAT,
+        [1, 4, 2],
+        [1.0, 2.0, 0.0, 1.0, -1.0, 0.5, 2.0, -1.0],
+    )
+    graph = helper.make_graph(
+        [helper.make_node("MatMul", ["x", "weight"], ["y"], name="batched_matmul")],
+        "runtime_batched_matmul",
+        [x],
+        [y],
+        [weight],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+
+
+def make_reduce_mean_model():
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])
+    axes = helper.make_tensor("axes", TensorProto.INT64, [1], [1])
+    graph = helper.make_graph(
+        [helper.make_node("ReduceMean", ["x", "axes"], ["y"], name="reduce_mean", keepdims=0)],
+        "runtime_reduce_mean",
+        [x],
+        [y],
+        [axes],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+
+
+def make_softmax_model():
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    graph = helper.make_graph(
+        [helper.make_node("Softmax", ["x"], ["y"], name="softmax", axis=1)],
+        "runtime_softmax",
+        [x],
+        [y],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+
+
+def make_layer_normalization_model():
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 4])
+    scale = helper.make_tensor("scale", TensorProto.FLOAT, [4], [1.0, 0.5, 2.0, -1.0])
+    bias = helper.make_tensor("bias", TensorProto.FLOAT, [4], [0.0, 1.0, -1.0, 0.5])
+    graph = helper.make_graph(
+        [
+            helper.make_node(
+                "LayerNormalization",
+                ["x", "scale", "bias"],
+                ["y"],
+                name="layer_norm",
+                axis=-1,
+                epsilon=1e-5,
+            )
+        ],
+        "runtime_layer_normalization",
+        [x],
+        [y],
+        [scale, bias],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+
+
+def make_transformer_block_model():
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3, 4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 3, 2])
+    projection = helper.make_tensor_value_info("projection", TensorProto.FLOAT, [2, 3, 4])
+    biased = helper.make_tensor_value_info("biased", TensorProto.FLOAT, [2, 3, 4])
+    normalized = helper.make_tensor_value_info("normalized", TensorProto.FLOAT, [2, 3, 4])
+    probabilities = helper.make_tensor_value_info("probabilities", TensorProto.FLOAT, [2, 3, 4])
+    projection_weight = helper.make_tensor(
+        "projection_weight",
+        TensorProto.FLOAT,
+        [4, 4],
+        [1.0, 0.0, 0.5, -1.0, 0.0, 2.0, 1.0, 0.0, -0.5, 1.0, 0.0, 2.0, 1.0, -1.0, 0.0, 0.5],
+    )
+    projection_bias = helper.make_tensor(
+        "projection_bias", TensorProto.FLOAT, [4], [0.25, -0.5, 1.0, 0.0]
+    )
+    norm_scale = helper.make_tensor(
+        "norm_scale", TensorProto.FLOAT, [4], [1.0, 0.5, 2.0, -1.0]
+    )
+    norm_bias = helper.make_tensor(
+        "norm_bias", TensorProto.FLOAT, [4], [0.0, 1.0, -1.0, 0.5]
+    )
+    output_weight = helper.make_tensor(
+        "output_weight",
+        TensorProto.FLOAT,
+        [4, 2],
+        [1.0, -1.0, 0.0, 0.5, 2.0, 1.0, -0.5, 2.0],
+    )
+    graph = helper.make_graph(
+        [
+            helper.make_node(
+                "MatMul",
+                ["x", "projection_weight"],
+                ["projection"],
+                name="projection",
+            ),
+            helper.make_node(
+                "Add",
+                ["projection", "projection_bias"],
+                ["biased"],
+                name="projection_bias_add",
+            ),
+            helper.make_node(
+                "LayerNormalization",
+                ["biased", "norm_scale", "norm_bias"],
+                ["normalized"],
+                name="layer_norm",
+                axis=-1,
+                epsilon=1e-5,
+            ),
+            helper.make_node(
+                "Softmax",
+                ["normalized"],
+                ["probabilities"],
+                name="attention_softmax",
+                axis=-1,
+            ),
+            helper.make_node(
+                "MatMul",
+                ["probabilities", "output_weight"],
+                ["y"],
+                name="output_projection",
+            ),
+        ],
+        "runtime_transformer_block",
+        [x],
+        [y],
+        [projection_weight, projection_bias, norm_scale, norm_bias, output_weight],
+        value_info=[projection, biased, normalized, probabilities],
+    )
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+
+
 @unittest.skipUnless(
     detect_toolchain().vulkaninfo
     and detect_toolchain().glslang_validator
@@ -154,6 +296,112 @@ class VulkanPackageRuntimeTests(unittest.TestCase):
             [[1.0, 2.0], [0.0, 1.0], [-1.0, 0.5]], dtype=np.float32
         )
         np.testing.assert_allclose(result.outputs["y"], expected, rtol=1e-5, atol=1e-6)
+
+    def test_executes_batched_matmul_with_broadcast_constant_weight(self) -> None:
+        destination = Path(self.temporary_directory.name) / "batched-matmul.ttv"
+        compile_static_model(make_batched_matmul_model(), destination)
+        inputs = np.asarray(
+            [
+                [[1.0, 2.0, 3.0, 4.0], [-1.0, 0.5, 2.0, 1.0], [2.0, -1.0, 0.0, 3.0]],
+                [[0.0, 1.0, 2.0, 3.0], [1.0, 2.0, 3.0, 4.0], [-2.0, 0.0, 1.0, 2.0]],
+            ],
+            dtype=np.float32,
+        )
+        weight = np.asarray(
+            [[1.0, 2.0], [0.0, 1.0], [-1.0, 0.5], [2.0, -1.0]],
+            dtype=np.float32,
+        )
+        with VulkanPackageRuntime(destination) as runtime:
+            result = runtime.run({"x": inputs})
+
+        expected = np.matmul(inputs, weight)
+        np.testing.assert_allclose(result.outputs["y"], expected, rtol=1e-5, atol=1e-6)
+
+    def test_executes_reduce_mean_softmax_and_layer_normalization(self) -> None:
+        cases = (
+            (
+                make_reduce_mean_model(),
+                np.arange(24, dtype=np.float32).reshape(2, 3, 4),
+                lambda value: np.mean(value, axis=1),
+            ),
+            (
+                make_softmax_model(),
+                np.asarray(
+                    [[[1.0, 2.0, 3.0, 4.0], [0.0, -1.0, 1.0, 2.0], [2.0, 0.0, -2.0, 1.0]],
+                     [[-1.0, 0.5, 2.0, 3.0], [1.0, 2.0, -1.0, 0.0], [0.0, -2.0, 1.0, 2.0]]],
+                    dtype=np.float32,
+                ),
+                lambda value: np.exp(value - np.max(value, axis=1, keepdims=True))
+                / np.sum(np.exp(value - np.max(value, axis=1, keepdims=True)), axis=1, keepdims=True),
+            ),
+            (
+                make_layer_normalization_model(),
+                np.arange(24, dtype=np.float32).reshape(2, 3, 4),
+                lambda value: (
+                    (value - np.mean(value, axis=-1, keepdims=True))
+                    / np.sqrt(np.var(value, axis=-1, keepdims=True) + 1e-5)
+                )
+                * np.asarray([1.0, 0.5, 2.0, -1.0], dtype=np.float32)
+                + np.asarray([0.0, 1.0, -1.0, 0.5], dtype=np.float32),
+            ),
+        )
+        for model, inputs, expected_fn in cases:
+            with self.subTest(model=model.graph.name):
+                destination = Path(self.temporary_directory.name) / f"{model.graph.name}.ttv"
+                compile_static_model(model, destination)
+                with VulkanPackageRuntime(destination) as runtime:
+                    result = runtime.run({"x": inputs})
+                np.testing.assert_allclose(
+                    result.outputs["y"], expected_fn(inputs), rtol=2e-4, atol=2e-5
+                )
+
+    def test_executes_a_static_transformer_block(self) -> None:
+        import onnxruntime as ort
+
+        destination = Path(self.temporary_directory.name) / "transformer-block.ttv"
+        model = make_transformer_block_model()
+        report = compile_static_model(model, destination)
+        self.assertEqual(report.dispatches, 5)
+
+        inputs = np.asarray(
+            [
+                [[1.0, -2.0, 0.5, 3.0], [0.0, 1.0, -1.0, 2.0], [2.0, 0.5, 1.0, -0.5]],
+                [[-1.0, 2.0, 0.0, 1.0], [3.0, -1.0, 2.0, 0.5], [0.5, 1.5, -2.0, 2.0]],
+            ],
+            dtype=np.float32,
+        )
+        projection_weight = np.asarray(
+            [[1.0, 0.0, 0.5, -1.0], [0.0, 2.0, 1.0, 0.0], [-0.5, 1.0, 0.0, 2.0], [1.0, -1.0, 0.0, 0.5]],
+            dtype=np.float32,
+        )
+        projection_bias = np.asarray([0.25, -0.5, 1.0, 0.0], dtype=np.float32)
+        norm_scale = np.asarray([1.0, 0.5, 2.0, -1.0], dtype=np.float32)
+        norm_bias = np.asarray([0.0, 1.0, -1.0, 0.5], dtype=np.float32)
+        output_weight = np.asarray(
+            [[1.0, -1.0], [0.0, 0.5], [2.0, 1.0], [-0.5, 2.0]],
+            dtype=np.float32,
+        )
+        projection = np.matmul(inputs, projection_weight) + projection_bias
+        normalized = (
+            (projection - np.mean(projection, axis=-1, keepdims=True))
+            / np.sqrt(np.var(projection, axis=-1, keepdims=True) + 1e-5)
+        ) * norm_scale + norm_bias
+        probabilities = np.exp(
+            normalized - np.max(normalized, axis=-1, keepdims=True)
+        )
+        probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
+        expected = np.matmul(probabilities, output_weight)
+
+        with VulkanPackageRuntime(destination) as runtime:
+            result = runtime.run({"x": inputs})
+
+        np.testing.assert_allclose(result.outputs["y"], expected, rtol=2e-4, atol=2e-5)
+        session = ort.InferenceSession(
+            model.SerializeToString(),
+            providers=["CPUExecutionProvider"],
+        )
+        ort_output = session.run(["y"], {"x": inputs})[0]
+        np.testing.assert_allclose(result.outputs["y"], ort_output, rtol=2e-4, atol=2e-5)
 
 
 if __name__ == "__main__":

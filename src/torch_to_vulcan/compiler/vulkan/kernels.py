@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
+
+import numpy as np
 
 from ..contracts import OperatorCapability
 from .ir import BufferBinding, DispatchPlan, DispatchStep, ShaderModule
@@ -36,6 +38,8 @@ class KernelContext:
     inputs: tuple[KernelTensor, ...]
     outputs: tuple[KernelTensor, ...]
     layout: str = "contiguous"
+    constant_inputs: Mapping[str, object] | None = None
+    runtime_inputs: tuple[KernelTensor, ...] | None = None
 
 
 Builder = Callable[[KernelContext], DispatchPlan]
@@ -163,7 +167,7 @@ def default_kernel_registry() -> KernelRegistry:
                 op_type="MatMul",
                 data_types=frozenset({"FLOAT"}),
                 layouts=frozenset({"contiguous"}),
-                notes=("二维 FP32；批量 MatMul 后续扩展",),
+                notes=("静态 FP32；支持 rank>=2 和 trailing batch broadcast",),
             ),
         )
     )
@@ -179,6 +183,51 @@ def default_kernel_registry() -> KernelRegistry:
                 data_types=frozenset({"FLOAT"}),
                 layouts=frozenset({"contiguous"}),
                 notes=("二维 FP32；常见 C 广播形式",),
+            ),
+        )
+    )
+    registry.register(
+        KernelCandidate(
+            "reduction.reduce_mean.fp32",
+            "",
+            "ReduceMean",
+            _reduce_mean_fp32,
+            capability=OperatorCapability(
+                domain="",
+                op_type="ReduceMean",
+                data_types=frozenset({"FLOAT", "INT64"}),
+                layouts=frozenset({"contiguous"}),
+                notes=("静态 FP32；常量 axes；连续 reduction axes",),
+            ),
+        )
+    )
+    registry.register(
+        KernelCandidate(
+            "normalization.softmax.fp32",
+            "",
+            "Softmax",
+            _softmax_fp32,
+            capability=OperatorCapability(
+                domain="",
+                op_type="Softmax",
+                data_types=frozenset({"FLOAT"}),
+                layouts=frozenset({"contiguous"}),
+                notes=("静态 FP32；任意合法 axis",),
+            ),
+        )
+    )
+    registry.register(
+        KernelCandidate(
+            "normalization.layer_norm.fp32",
+            "",
+            "LayerNormalization",
+            _layer_normalization_fp32,
+            capability=OperatorCapability(
+                domain="",
+                op_type="LayerNormalization",
+                data_types=frozenset({"FLOAT"}),
+                layouts=frozenset({"contiguous"}),
+                notes=("静态 FP32；trailing normalized dimensions；仅输出 Y",),
             ),
         )
     )
@@ -404,18 +453,37 @@ def _matmul_fp32(context: KernelContext) -> DispatchPlan:
     a_shape = _static_shape(a.shape)
     b_shape = _static_shape(b.shape)
     output_shape = _static_shape(output.shape)
-    if len(a_shape) != 2 or len(b_shape) != 2 or len(output_shape) != 2:
-        raise UnsupportedKernel("首版 MatMul 仅支持二维矩阵，批量矩阵后续加入")
-    m, k = a_shape
-    k_b, n = b_shape
-    if k != k_b or output_shape != (m, n):
+    if len(a_shape) < 2 or len(b_shape) < 2 or len(output_shape) < 2:
+        raise UnsupportedKernel("MatMul 首版要求两个输入和输出的秩至少为 2")
+    a_batch = a_shape[:-2]
+    b_batch = b_shape[:-2]
+    output_batch = output_shape[:-2]
+    inferred_batch = _broadcast_shape((a_batch, b_batch))
+    m, k = a_shape[-2:]
+    k_b, n = b_shape[-2:]
+    if k != k_b or output_shape != (*inferred_batch, m, n):
         raise UnsupportedKernel(
-            f"MatMul 形状不匹配: {a_shape} @ {b_shape} -> {output_shape}"
+            f"MatMul 形状不匹配: {a_shape} @ {b_shape} -> {output_shape}; "
+            f"期望 batch={inferred_batch}, matrix=({m}, {n})"
         )
+    output_element_count = _static_element_count(output.shape)
+    matrix_element_count = m * n
+    a_batch_offset = _matmul_batch_offset(a_batch, output_batch, m * k)
+    b_batch_offset = _matmul_batch_offset(b_batch, output_batch, k * n)
+    a_element_index = (
+        f"row * {k}u + inner"
+        if not a_batch
+        else f"a_batch_offset + row * {k}u + inner"
+    )
+    b_element_index = (
+        f"inner * {n}u + column"
+        if not b_batch
+        else f"b_batch_offset + inner * {n}u + column"
+    )
     operation = (
         f"float sum = 0.0;\n"
         f"    for (uint inner = 0u; inner < {k}u; ++inner) {{\n"
-        f"        sum += input_a[row * {k}u + inner] * input_b[inner * {n}u + column];\n"
+        f"        sum += input_a[{a_element_index}] * input_b[{b_element_index}];\n"
         f"    }}\n"
         "    output_y[index] = sum;"
     )
@@ -425,18 +493,328 @@ def _matmul_fp32(context: KernelContext) -> DispatchPlan:
             "layout(set = 0, binding = 1, std430) readonly buffer InputB { float input_b[]; };",
             "layout(set = 0, binding = 2, std430) writeonly buffer Output { float output_y[]; };",
         ),
-        "uint row = index / " + str(n) + "u;\n"
+        "uint batch_index = index / " + str(matrix_element_count) + "u;\n"
+        "    uint row = (index / " + str(n) + "u) % " + str(m) + "u;\n"
         "    uint column = index % " + str(n) + "u;\n"
+        + f"    uint a_batch_offset = {a_batch_offset};\n"
+        + f"    uint b_batch_offset = {b_batch_offset};\n"
         + operation,
     )
     return _single_dispatch_plan(
         context,
         source,
-        m * n,
+        output_element_count,
         input_count=2,
         kernel_id="linear.matmul.fp32",
-        push_constants={"element_count": m * n},
     )
+
+
+def _matmul_batch_offset(
+    input_batch: tuple[int, ...],
+    output_batch: tuple[int, ...],
+    matrix_element_count: int,
+) -> str:
+    """Map one flattened output batch index to an input element offset."""
+    if not input_batch:
+        return "0u"
+    rank_offset = len(output_batch) - len(input_batch)
+    input_strides = _row_major_strides(input_batch)
+    output_strides = _row_major_strides(output_batch)
+    terms: list[str] = []
+    for input_axis, (dimension, input_stride) in enumerate(
+        zip(input_batch, input_strides, strict=True)
+    ):
+        if dimension == 1:
+            continue
+        output_axis = rank_offset + input_axis
+        output_dimension = output_batch[output_axis]
+        output_stride = output_strides[output_axis]
+        if output_stride == 1:
+            coordinate = f"(batch_index % {output_dimension}u)"
+        else:
+            coordinate = (
+                f"((batch_index / {output_stride}u) % {output_dimension}u)"
+            )
+        if input_stride != 1:
+            coordinate += f" * {input_stride}u"
+        terms.append(coordinate)
+    if not terms:
+        return "0u"
+    return f"({ ' + '.join(terms) }) * {matrix_element_count}u"
+
+
+def _reduce_mean_fp32(context: KernelContext) -> DispatchPlan:
+    if len(context.inputs) not in {1, 2} or len(context.outputs) != 1:
+        raise UnsupportedKernel(
+            "ReduceMean 期望 1 个 X、可选 axes 和 1 个输出，实际为 "
+            f"{len(context.inputs)} 个输入/{len(context.outputs)} 个输出"
+        )
+    _require_known_shapes((*context.inputs, *context.outputs))
+    _require_fp32(
+        KernelContext(
+            context.domain,
+            context.op_type,
+            context.opset_version,
+            context.attributes,
+            (context.inputs[0],),
+            context.outputs,
+            context.layout,
+            context.constant_inputs,
+            (context.inputs[0],),
+        )
+    )
+    input_shape = _static_shape(context.inputs[0].shape)
+    output_shape = _static_shape(context.outputs[0].shape)
+    axes = _reduce_axes(context, len(input_shape))
+    keepdims = _attribute_flag(context.attributes.get("keepdims", 1), "ReduceMean keepdims")
+    if context.attributes.get("noop_with_empty_axes", 0) not in {0, False}:
+        raise UnsupportedKernel("ReduceMean noop_with_empty_axes=1 暂未支持")
+    expected_shape = _reduction_output_shape(input_shape, axes, keepdims)
+    if output_shape != expected_shape:
+        raise UnsupportedKernel(
+            f"ReduceMean 输出形状不匹配: axes={axes}, keepdims={int(keepdims)}, "
+            f"期望 {expected_shape}，实际 {output_shape}"
+        )
+    reduction_count = math.prod(input_shape[axis] for axis in axes)
+    output_count = _static_element_count(context.outputs[0].shape)
+    input_strides = _row_major_strides(input_shape)
+    output_strides = _row_major_strides(output_shape)
+    output_axis_for_input = {
+        input_axis: (
+            input_axis
+            if keepdims
+            else sum(1 for axis in range(input_axis) if axis not in axes)
+        )
+        for input_axis in range(len(input_shape))
+        if input_axis not in axes
+    }
+    fixed_terms: list[str] = []
+    for input_axis, input_stride in enumerate(input_strides):
+        if input_axis in axes:
+            continue
+        output_axis = output_axis_for_input[input_axis]
+        output_dimension = output_shape[output_axis]
+        output_stride = output_strides[output_axis]
+        if output_dimension == 1 or output_stride == 1:
+            coordinate = f"(index % {output_dimension}u)" if output_stride == 1 else f"((index / {output_stride}u) % {output_dimension}u)"
+        else:
+            coordinate = f"((index / {output_stride}u) % {output_dimension}u)"
+        if input_stride != 1:
+            coordinate += f" * {input_stride}u"
+        fixed_terms.append(coordinate)
+    fixed_offset = " + ".join(fixed_terms) if fixed_terms else "0u"
+    reduced_terms: list[str] = []
+    for reduced_index, input_axis in enumerate(axes):
+        divisor = math.prod(input_shape[axis] for axis in axes[reduced_index + 1 :])
+        coordinate = (
+            f"((reduction / {divisor}u) % {input_shape[input_axis]}u)"
+        )
+        input_stride = input_strides[input_axis]
+        if input_stride != 1:
+            coordinate += f" * {input_stride}u"
+        reduced_terms.append(coordinate)
+    reduced_offset = " + ".join(reduced_terms) if reduced_terms else "0u"
+    runtime_context = KernelContext(
+        context.domain,
+        context.op_type,
+        context.opset_version,
+        context.attributes,
+        (context.inputs[0],),
+        context.outputs,
+        context.layout,
+        context.constant_inputs,
+        (context.inputs[0],),
+    )
+    source = _shader_source(
+        (
+            "layout(set = 0, binding = 0, std430) readonly buffer InputX { float input_x[]; };",
+            "layout(set = 0, binding = 1, std430) writeonly buffer Output { float output_y[]; };",
+        ),
+        f"uint input_base = {fixed_offset};\n"
+        f"    float sum = 0.0;\n"
+        f"    for (uint reduction = 0u; reduction < {reduction_count}u; ++reduction) {{\n"
+        f"        sum += input_x[input_base + {reduced_offset}];\n"
+        "    }\n"
+        f"    output_y[index] = sum / {_glsl_float(float(reduction_count))};",
+    )
+    return _single_dispatch_plan(
+        runtime_context,
+        source,
+        output_count,
+        input_count=1,
+        kernel_id="reduction.reduce_mean.fp32",
+    )
+
+
+def _softmax_fp32(context: KernelContext) -> DispatchPlan:
+    _require_arity(context, 1, 1)
+    _require_known_shapes((*context.inputs, *context.outputs))
+    _require_fp32(context)
+    input_shape = _static_shape(context.inputs[0].shape)
+    output_shape = _static_shape(context.outputs[0].shape)
+    if input_shape != output_shape:
+        raise UnsupportedKernel("Softmax 输入输出形状必须一致")
+    axis = _normalize_axis(context.attributes.get("axis", -1), len(input_shape), "Softmax")
+    axis_length = input_shape[axis]
+    inner = math.prod(input_shape[axis + 1 :])
+    slice_length = axis_length * inner
+    element_count = _static_element_count(context.outputs[0].shape)
+    source = _shader_source(
+        (
+            "layout(set = 0, binding = 0, std430) readonly buffer InputX { float input_x[]; };",
+            "layout(set = 0, binding = 1, std430) writeonly buffer Output { float output_y[]; };",
+        ),
+        f"uint axis_index = (index / {inner}u) % {axis_length}u;\n"
+        f"    uint inner_index = index % {inner}u;\n"
+        f"    uint slice_base = (index / {slice_length}u) * {slice_length}u + inner_index;\n"
+        "    float maximum = -3.402823466e+38;\n"
+        f"    for (uint axis_value = 0u; axis_value < {axis_length}u; ++axis_value) {{\n"
+        f"        maximum = max(maximum, input_x[slice_base + axis_value * {inner}u]);\n"
+        "    }\n"
+        "    float denominator = 0.0;\n"
+        f"    for (uint axis_value = 0u; axis_value < {axis_length}u; ++axis_value) {{\n"
+        f"        denominator += exp(input_x[slice_base + axis_value * {inner}u] - maximum);\n"
+        "    }\n"
+        f"    output_y[index] = exp(input_x[slice_base + axis_index * {inner}u] - maximum) / denominator;",
+    )
+    return _single_dispatch_plan(
+        context,
+        source,
+        element_count,
+        input_count=1,
+        kernel_id="normalization.softmax.fp32",
+    )
+
+
+def _layer_normalization_fp32(context: KernelContext) -> DispatchPlan:
+    if len(context.inputs) not in {2, 3} or len(context.outputs) != 1:
+        raise UnsupportedKernel(
+            "LayerNormalization 首版要求 X/Scale/[B] 三个以内输入且仅输出 Y"
+        )
+    _require_known_shapes((*context.inputs, *context.outputs))
+    _require_fp32(context)
+    x, scale = context.inputs[:2]
+    bias = context.inputs[2] if len(context.inputs) == 3 else None
+    x_shape = _static_shape(x.shape)
+    output_shape = _static_shape(context.outputs[0].shape)
+    axis = _normalize_axis(
+        context.attributes.get("axis", -1), len(x_shape), "LayerNormalization"
+    )
+    if output_shape != x_shape:
+        raise UnsupportedKernel(
+            "LayerNormalization 输出形状必须与 X 一致"
+        )
+    normalized_shape = x_shape[axis:]
+    if _static_shape(scale.shape) != normalized_shape:
+        raise UnsupportedKernel(
+            f"LayerNormalization Scale 形状 {_static_shape(scale.shape)} != "
+            f"normalized shape {normalized_shape}"
+        )
+    if bias is not None and _static_shape(bias.shape) != normalized_shape:
+        raise UnsupportedKernel(
+            f"LayerNormalization Bias 形状 {_static_shape(bias.shape)} != "
+            f"normalized shape {normalized_shape}"
+        )
+    stash_type = context.attributes.get("stash_type", 1)
+    if isinstance(stash_type, bool) or not isinstance(stash_type, int) or stash_type != 1:
+        raise UnsupportedKernel("LayerNormalization 首版仅支持 stash_type=1")
+    epsilon = _finite_float(
+        context.attributes.get("epsilon", 1e-5), "LayerNormalization epsilon"
+    )
+    if epsilon < 0.0:
+        raise UnsupportedKernel("LayerNormalization epsilon 必须非负")
+    normalized_count = math.prod(normalized_shape)
+    element_count = _static_element_count(context.outputs[0].shape)
+    bias_binding = 2 if bias is not None else None
+    output_binding = 3 if bias is not None else 2
+    declarations = [
+        "layout(set = 0, binding = 0, std430) readonly buffer InputX { float input_x[]; };",
+        "layout(set = 0, binding = 1, std430) readonly buffer InputScale { float input_scale[]; };",
+    ]
+    if bias is not None:
+        declarations.append(
+            "layout(set = 0, binding = 2, std430) readonly buffer InputBias { float input_bias[]; };"
+        )
+    declarations.append(
+        f"layout(set = 0, binding = {output_binding}, std430) writeonly buffer Output {{ float output_y[]; }};"
+    )
+    bias_expression = (
+        "0.0"
+        if bias_binding is None
+        else "input_bias[index % " + str(normalized_count) + "u]"
+    )
+    group_size = normalized_count
+    source = _shader_source(
+        tuple(declarations),
+        f"uint normalized_index = index % {group_size}u;\n"
+        f"uint group_base = (index / {group_size}u) * {group_size}u;\n"
+        "float mean = 0.0;\n"
+        f"for (uint normalized = 0u; normalized < {group_size}u; ++normalized) {{\n"
+        "    mean += input_x[group_base + normalized];\n"
+        "}\n"
+        f"mean /= {_glsl_float(float(group_size))};\n"
+        "float variance = 0.0;\n"
+        f"for (uint normalized = 0u; normalized < {group_size}u; ++normalized) {{\n"
+        "    float centered = input_x[group_base + normalized] - mean;\n"
+        "    variance += centered * centered;\n"
+        "}\n"
+        f"variance /= {_glsl_float(float(group_size))};\n"
+        f"float normalized_value = (input_x[index] - mean) * inversesqrt(variance + {_glsl_float(epsilon)});\n"
+        f"output_y[index] = normalized_value * input_scale[normalized_index] + {bias_expression};",
+    )
+    return _single_dispatch_plan(
+        context,
+        source,
+        element_count,
+        input_count=len(context.inputs),
+        kernel_id="normalization.layer_norm.fp32",
+    )
+
+
+def _reduce_axes(context: KernelContext, rank: int) -> tuple[int, ...]:
+    value: object = context.attributes.get("axes")
+    if value is None and len(context.inputs) == 2:
+        if not context.constant_inputs:
+            raise UnsupportedKernel("ReduceMean axes 必须是编译期常量")
+        value = context.constant_inputs.get(context.inputs[1].name)
+        if value is None:
+            raise UnsupportedKernel("ReduceMean axes 必须是编译期常量")
+    if value is None and context.constant_inputs:
+        value = context.constant_inputs.get("axes")
+    if value is None:
+        axes = tuple(range(rank))
+    else:
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, int) and not isinstance(value, bool):
+            values = (value,)
+        elif isinstance(value, (list, tuple)):
+            values = tuple(value)
+        else:
+            raise UnsupportedKernel("ReduceMean axes 必须是编译期整数数组")
+        if any(isinstance(axis, bool) or not isinstance(axis, int) for axis in values):
+            raise UnsupportedKernel("ReduceMean axes 必须是编译期整数数组")
+        axes = tuple(int(axis) + rank if int(axis) < 0 else int(axis) for axis in values)
+    if not axes and rank > 0:
+        axes = tuple(range(rank))
+    if not axes:
+        return ()
+    if len(set(axes)) != len(axes) or any(axis < 0 or axis >= rank for axis in axes):
+        raise UnsupportedKernel(f"ReduceMean axes 越界或重复: {axes}")
+    ordered = tuple(sorted(axes))
+    if ordered != tuple(range(ordered[0], ordered[-1] + 1)):
+        raise UnsupportedKernel("ReduceMean 首版只支持连续 reduction axes")
+    return ordered
+
+
+def _reduction_output_shape(
+    input_shape: tuple[int, ...],
+    axes: tuple[int, ...],
+    keepdims: bool,
+) -> tuple[int, ...]:
+    if keepdims:
+        return tuple(1 if axis in axes else dimension for axis, dimension in enumerate(input_shape))
+    return tuple(dimension for axis, dimension in enumerate(input_shape) if axis not in axes)
 
 
 def _gemm_fp32(context: KernelContext) -> DispatchPlan:
@@ -513,9 +891,9 @@ def _gemm_fp32(context: KernelContext) -> DispatchPlan:
 def _require_fp32(context: KernelContext) -> None:
     if any(tensor.data_type != "FLOAT" for tensor in (*context.inputs, *context.outputs)):
         types = ", ".join(tensor.data_type for tensor in (*context.inputs, *context.outputs))
-        raise UnsupportedKernel(f"线性层首版仅支持 FP32，当前类型为 {types}")
+        raise UnsupportedKernel(f"当前 Kernel 仅支持 FP32，当前类型为 {types}")
     if any(tensor.layout != "contiguous" for tensor in (*context.inputs, *context.outputs)):
-        raise UnsupportedKernel("线性层首版仅支持 contiguous layout")
+        raise UnsupportedKernel("当前 Kernel 仅支持 contiguous layout")
 
 
 def _attribute_flag(value: object, name: str) -> bool:
@@ -523,7 +901,7 @@ def _attribute_flag(value: object, name: str) -> bool:
         return value
     if isinstance(value, int) and value in {0, 1}:
         return bool(value)
-    raise UnsupportedKernel(f"Gemm {name} 必须是 0 或 1")
+    raise UnsupportedKernel(f"{name} 必须是 0 或 1")
 
 
 def _finite_float(value: object, name: str) -> float:
@@ -532,7 +910,7 @@ def _finite_float(value: object, name: str) -> float:
         or not isinstance(value, (int, float))
         or not math.isfinite(float(value))
     ):
-        raise UnsupportedKernel(f"Gemm {name} 必须是有限浮点数")
+        raise UnsupportedKernel(f"{name} 必须是有限浮点数")
     return float(value)
 
 
@@ -590,12 +968,13 @@ def _single_dispatch_plan(
     push_constants: dict[str, int | float] | None = None,
 ) -> DispatchPlan:
     workgroups = _linear_workgroups(element_count)
+    bound_inputs = context.runtime_inputs or context.inputs
     bindings = tuple(
         BufferBinding(index, tensor.name or f"input_{index}", "read", tensor.data_type)
-        for index, tensor in enumerate(context.inputs)
+        for index, tensor in enumerate(bound_inputs)
     ) + (
         BufferBinding(
-            input_count,
+            len(bound_inputs),
             context.outputs[0].name or "output",
             "write",
             context.outputs[0].data_type,

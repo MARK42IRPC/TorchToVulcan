@@ -172,12 +172,29 @@ An operator entry must include ONNX version rules, shape/type inference,
 normalization, at least one backend candidate, invalid-input tests, and CPU/GPU
 differential verification.
 
-Current backend baseline: two-dimensional FP32 `MatMul` and `Gemm` are lowered
-to guarded Vulkan compute shaders and can be materialized into the existing
-linear package. `Gemm` covers `transA`, `transB`, finite `alpha`/`beta`, and
-scalar/vector/matrix C broadcast forms. Batched MatMul, FP16/INT8/INT4,
-runtime dynamic shapes, and native quantized execution are intentionally still
-outside this baseline.
+Current backend baseline: FP32 `MatMul` and `Gemm` are lowered to guarded
+Vulkan compute shaders and can be materialized into the existing linear
+package. `MatMul` covers two-dimensional matrices and statically shaped
+rank-at-least-two inputs with trailing batch broadcast. `Gemm` remains
+two-dimensional and covers `transA`, `transB`, finite
+`alpha`/`beta`, and scalar/vector/matrix C broadcast forms. FP16/INT8/INT4,
+runtime dynamic shapes, and native quantized execution remain outside this
+baseline.
+
+The first static Transformer acceptance slice is now device-verified for
+batched MatMul, `ReduceMean`, `Softmax`, `LayerNormalization`, and their
+composition in the linear TTV package. The next implementation order is:
+
+1. named subprograms and explicit package profiles;
+2. host-driven loops, persistent state tensors, and KV-cache;
+3. INT8 dequantization and offline INT4 weight dequantization;
+4. native quantized kernels and broader Transformer/Aemeath subgraphs.
+
+The Transformer sequence is an engineering acceptance path, not a promise of
+general Transformer or Aemeath support. Each step must pass normalization,
+shape/type validation, kernel lowering, SPIR-V compilation, real Vulkan
+execution, and reference differential verification before the matrix is
+expanded.
 
 ## Aemeath as a coverage milestone
 

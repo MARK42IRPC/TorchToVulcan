@@ -140,6 +140,65 @@ def make_matmul_target() -> VerificationTarget:
     )
 
 
+def make_batched_matmul_target() -> VerificationTarget:
+    return VerificationTarget(
+        target_id="matmul-fp32-batched-broadcast",
+        semantic_key="ai.onnx::MatMul@18:fp32-batched-broadcast",
+        domain="",
+        op_type="MatMul",
+        opset_version=18,
+        attributes={},
+        inputs=(
+            VerificationTensor("a", "FLOAT", ("2", "1", "3", "4")),
+            VerificationTensor("b", "FLOAT", ("1", "5", "4", "6")),
+        ),
+        outputs=(VerificationTensor("y", "FLOAT", ("2", "5", "3", "6")),),
+    )
+
+
+def make_reduce_mean_target() -> VerificationTarget:
+    return VerificationTarget(
+        target_id="reduce-mean-fp32",
+        semantic_key="ai.onnx::ReduceMean@13:fp32-axis-1",
+        domain="",
+        op_type="ReduceMean",
+        opset_version=13,
+        attributes={"axes": [1], "keepdims": 1},
+        inputs=(VerificationTensor("x", "FLOAT", ("2", "3", "4")),),
+        outputs=(VerificationTensor("y", "FLOAT", ("2", "1", "4")),),
+    )
+
+
+def make_softmax_target() -> VerificationTarget:
+    return VerificationTarget(
+        target_id="softmax-fp32",
+        semantic_key="ai.onnx::Softmax@13:fp32-axis-1",
+        domain="",
+        op_type="Softmax",
+        opset_version=13,
+        attributes={"axis": 1},
+        inputs=(VerificationTensor("x", "FLOAT", ("2", "3", "4")),),
+        outputs=(VerificationTensor("y", "FLOAT", ("2", "3", "4")),),
+    )
+
+
+def make_layer_normalization_target() -> VerificationTarget:
+    return VerificationTarget(
+        target_id="layer-normalization-fp32",
+        semantic_key="ai.onnx::LayerNormalization@17:fp32-last-axis",
+        domain="",
+        op_type="LayerNormalization",
+        opset_version=17,
+        attributes={"axis": -1, "epsilon": 1e-5},
+        inputs=(
+            VerificationTensor("x", "FLOAT", ("2", "3", "4")),
+            VerificationTensor("scale", "FLOAT", ("4",)),
+            VerificationTensor("bias", "FLOAT", ("4",)),
+        ),
+        outputs=(VerificationTensor("y", "FLOAT", ("2", "3", "4")),),
+    )
+
+
 def make_gemm_target() -> VerificationTarget:
     return VerificationTarget(
         target_id="gemm-fp32",
@@ -522,7 +581,11 @@ class VulkanKernelTests(unittest.TestCase):
             make_transpose_target(),
             make_concat_target(),
             make_matmul_target(),
+            make_batched_matmul_target(),
             make_gemm_target(),
+            make_reduce_mean_target(),
+            make_softmax_target(),
+            make_layer_normalization_target(),
             *[
                 make_unary_target(op_type)
                 for op_type in (

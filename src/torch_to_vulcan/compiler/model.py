@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 import onnx
+import numpy as np
 from onnx import ModelProto, shape_inference
 
 from .constants import fold_constant_subgraph, rewrite_model_with_folded_constants
@@ -232,6 +233,7 @@ def compile_static_model(
                 _kernel_tensor(name, spec)
                 for name, spec in zip(output_names, output_specs, strict=True)
             ),
+            constant_inputs=_compile_time_constants(input_names, graph.constants),
         )
         try:
             plan = selected_registry.select(context)
@@ -463,6 +465,49 @@ def _kernel_tensor(name: str, spec: NormalizedTensor) -> KernelTensor:
         layout=spec.layout,
         strides=tuple(str(value) for value in (spec.strides or ())),
     )
+
+
+def _compile_time_constants(
+    names: tuple[str, ...],
+    constants: Mapping[str, NormalizedConstant],
+) -> dict[str, object]:
+    """Decode only small initializer controls used while selecting a kernel."""
+    result: dict[str, object] = {}
+    for name in names:
+        constant = constants.get(name)
+        if constant is None:
+            continue
+        tensor = constant.tensor
+        if tensor.element_count > 16 or len(constant.data) > 128:
+            continue
+        dtype = _compile_time_numpy_dtype(tensor.data_type)
+        if dtype is None:
+            continue
+        values = np.frombuffer(
+            constant.data,
+            dtype=dtype,
+            count=tensor.element_count,
+        ).copy()
+        result[name] = values.reshape(tensor.static_shape)
+    return result
+
+
+def _compile_time_numpy_dtype(data_type: str) -> np.dtype[object] | None:
+    dtypes: dict[str, np.dtype[object]] = {
+        "BOOL": np.dtype(np.bool_),
+        "FLOAT16": np.dtype(np.float16),
+        "FLOAT": np.dtype(np.float32),
+        "DOUBLE": np.dtype(np.float64),
+        "INT8": np.dtype(np.int8),
+        "UINT8": np.dtype(np.uint8),
+        "INT16": np.dtype(np.int16),
+        "UINT16": np.dtype(np.uint16),
+        "INT32": np.dtype(np.int32),
+        "UINT32": np.dtype(np.uint32),
+        "INT64": np.dtype(np.int64),
+        "UINT64": np.dtype(np.uint64),
+    }
+    return dtypes.get(data_type)
 
 
 def _materialize_view(

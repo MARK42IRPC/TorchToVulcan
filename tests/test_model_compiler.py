@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
 import onnx
 from onnx import TensorProto, helper
 
@@ -195,6 +196,139 @@ class StaticModelCompilerTests(unittest.TestCase):
         self.assertEqual(plan.steps[0].workgroups, (1, 1, 1))
         self.assertIn("for (uint inner = 0u; inner < 3u; ++inner)", plan.steps[0].shader.source)
         self.assertIn("input_a[row * 3u + inner]", plan.steps[0].shader.source)
+
+    def test_plans_batched_matmul_with_trailing_batch_broadcast(self) -> None:
+        from torch_to_vulcan.compiler.vulkan.kernels import default_kernel_registry
+
+        plan = default_kernel_registry().select(
+            KernelContext(
+                "",
+                "MatMul",
+                18,
+                {},
+                (
+                    KernelTensor("x", "FLOAT", ("2", "1", "3", "4")),
+                    KernelTensor("weight", "FLOAT", ("1", "5", "4", "6")),
+                ),
+                (KernelTensor("y", "FLOAT", ("2", "5", "3", "6")),),
+            )
+        )
+
+        source = plan.steps[0].shader.source
+        self.assertEqual(plan.kernel_id, "linear.matmul.fp32")
+        self.assertEqual(plan.steps[0].push_constants["element_count"], 180)
+        self.assertEqual(plan.steps[0].workgroups, (1, 1, 1))
+        self.assertIn("uint batch_index = index / 18u", source)
+        self.assertIn("uint row = (index / 6u) % 3u", source)
+        self.assertIn("a_batch_offset", source)
+        self.assertIn("b_batch_offset", source)
+        self.assertIn("input_a[a_batch_offset + row * 4u + inner]", source)
+
+    def test_rejects_invalid_batched_matmul_shapes(self) -> None:
+        from torch_to_vulcan.compiler.vulkan.kernels import (
+            UnsupportedKernel,
+            default_kernel_registry,
+        )
+
+        with self.assertRaisesRegex(UnsupportedKernel, "广播"):
+            default_kernel_registry().select(
+                KernelContext(
+                    "",
+                    "MatMul",
+                    18,
+                    {},
+                    (
+                        KernelTensor("x", "FLOAT", ("2", "3", "4")),
+                        KernelTensor("weight", "FLOAT", ("5", "4", "6")),
+                    ),
+                    (KernelTensor("y", "FLOAT", ("2", "3", "6")),),
+                )
+            )
+
+    def test_plans_reduce_mean_with_compile_time_axes_without_binding_axes(self) -> None:
+        from torch_to_vulcan.compiler.vulkan.kernels import default_kernel_registry
+
+        plan = default_kernel_registry().select(
+            KernelContext(
+                "",
+                "ReduceMean",
+                18,
+                {"keepdims": 1},
+                (
+                    KernelTensor("x", "FLOAT", ("2", "3", "4")),
+                    KernelTensor("axes", "INT64", ("1",)),
+                ),
+                (KernelTensor("y", "FLOAT", ("2", "3", "1")),),
+                constant_inputs={"axes": np.asarray([2], dtype=np.int64)},
+            )
+        )
+
+        self.assertEqual(plan.kernel_id, "reduction.reduce_mean.fp32")
+        self.assertEqual(
+            [binding.name for binding in plan.steps[0].bindings],
+            ["x", "y"],
+        )
+        self.assertIn("reduction < 4u", plan.steps[0].shader.source)
+        self.assertIn("input_base", plan.steps[0].shader.source)
+
+    def test_plans_softmax_and_layer_normalization(self) -> None:
+        from torch_to_vulcan.compiler.vulkan.kernels import default_kernel_registry
+
+        registry = default_kernel_registry()
+        softmax = registry.select(
+            KernelContext(
+                "",
+                "Softmax",
+                13,
+                {"axis": 1},
+                (KernelTensor("x", "FLOAT", ("2", "3", "4")),),
+                (KernelTensor("y", "FLOAT", ("2", "3", "4")),),
+            )
+        )
+        layer_norm = registry.select(
+            KernelContext(
+                "",
+                "LayerNormalization",
+                17,
+                {"axis": -1, "epsilon": 1e-5},
+                (
+                    KernelTensor("x", "FLOAT", ("2", "3", "4")),
+                    KernelTensor("scale", "FLOAT", ("4",)),
+                    KernelTensor("bias", "FLOAT", ("4",)),
+                ),
+                (KernelTensor("y", "FLOAT", ("2", "3", "4")),),
+            )
+        )
+
+        self.assertEqual(softmax.kernel_id, "normalization.softmax.fp32")
+        self.assertIn("maximum", softmax.steps[0].shader.source)
+        self.assertEqual(layer_norm.kernel_id, "normalization.layer_norm.fp32")
+        self.assertEqual(
+            [binding.name for binding in layer_norm.steps[0].bindings],
+            ["x", "scale", "bias", "y"],
+        )
+        self.assertIn("variance", layer_norm.steps[0].shader.source)
+
+    def test_rejects_layer_normalization_scale_with_wrong_shape(self) -> None:
+        from torch_to_vulcan.compiler.vulkan.kernels import (
+            UnsupportedKernel,
+            default_kernel_registry,
+        )
+
+        with self.assertRaisesRegex(UnsupportedKernel, "Scale"):
+            default_kernel_registry().select(
+                KernelContext(
+                    "",
+                    "LayerNormalization",
+                    17,
+                    {"axis": -1},
+                    (
+                        KernelTensor("x", "FLOAT", ("2", "3", "4")),
+                        KernelTensor("scale", "FLOAT", ("3",)),
+                    ),
+                    (KernelTensor("y", "FLOAT", ("2", "3", "4")),),
+                )
+            )
 
     def test_plans_gemm_transpose_and_bias_broadcast(self) -> None:
         from torch_to_vulcan.compiler.vulkan.kernels import default_kernel_registry

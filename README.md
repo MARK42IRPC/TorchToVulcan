@@ -21,8 +21,10 @@ Torch to Vulcan 是一个可视化 ONNX-to-Vulkan 计算编译器。项目由节
 - Python Graph IR 数据结构、跨对象校验和测试；
 - 将支持的静态 ONNX 根图编译为带完整性校验的 TTV 0.1 可执行目录包；
 - 提供首个规范化 ONNX IR，保留符号维度、layout、stride、常量和嵌套子图；
-- 将二维 FP32 `MatMul`/`Gemm` 编译为 Vulkan compute shader，并可在真实 Vulkan
-  设备上执行和与 ONNX Runtime 做差分验证；
+- 将二维和静态 batch FP32 `MatMul`、二维 `Gemm` 编译为 Vulkan compute
+  shader，并可在真实 Vulkan 设备上执行和与 ONNX Runtime 做差分验证；
+- 将静态 FP32 `ReduceMean`、`Softmax` 和 `LayerNormalization` 编译为 Vulkan
+  compute shader，并完成一个静态 Transformer block 的线性包执行验证；
 - 对常量/shape 子图做编译期求值，将 `Identity`/`Reshape` 落为视图，并将已注册的 FP32 kernel 编译为 SPIR-V。
 - 通过 Vulkan 运行时执行已落盘的线性 TTV 程序，支持持久设备、pipeline、descriptor 和 command buffer。
 
@@ -99,8 +101,9 @@ profile，将该模型特化为当前 TTV 0.1 静态包；这不是运行时动�
 `inputs.npz` 的 key 必须与 package manifest 中的输入 tensor ID 一致。runtime 默认使用
 host-visible buffer；`--device-local` 会使用设备局部 tensor 和 staging 拷贝，若设备不支持则回退并打印实际模式。
 `--resident` 只测输入输出已驻留 GPU 时的稳态调度。大模型的统一显存 arena、生命周期复用、算子融合和异步流水仍在迭代中。
-当前 `MatMul`/`Gemm` 只覆盖二维 FP32；批量矩阵、FP16/INT8/INT4、运行时动态 shape
-和控制流仍会明确阻止生成 TTV 0.1 包，详见
+当前 `Gemm` 仍只覆盖二维 FP32；`MatMul` 的 batch 维度只接受静态 shape 和
+trailing broadcast。FP16/INT8/INT4、运行时动态 shape 和控制流仍会明确阻止
+生成 TTV 0.1 包，详见
 [`ONNX/Vulkan 覆盖路线`](docs/onnx-vulkan-coverage.md)。
 
 ### 测试与构建
@@ -145,7 +148,8 @@ Torch to Vulcan is a visual ONNX-to-Vulkan compute compiler. It combines a node-
 - validate compiler-side Graph IR structures and cross-object invariants;
 - compile supported static ONNX root graphs into integrity-checked TTV 0.1 executable directory packages;
 - normalize ONNX models into an internal IR that preserves symbolic dimensions, layouts, strides, constants, and nested graphs;
-- lower two-dimensional FP32 `MatMul`/`Gemm` into Vulkan compute shaders, execute them on a real Vulkan device, and compare them with ONNX Runtime;
+- lower two-dimensional and statically batched FP32 `MatMul`, plus two-dimensional `Gemm`, into Vulkan compute shaders, execute them on a real Vulkan device, and compare them with ONNX Runtime;
+- lower static FP32 `ReduceMean`, `Softmax`, and `LayerNormalization`, and execute a static Transformer block through the linear package;
 - evaluate constant/shape subgraphs at compile time, lower `Identity`/`Reshape` to views, and compile registered FP32 kernels to SPIR-V.
 - execute a materialized linear TTV program through the Vulkan runtime and benchmark steady-state latency;
 
@@ -229,9 +233,9 @@ steady-state dispatch command buffer without input upload or output readback.
 Small graphs can still lose to CPU because queue submission and synchronization
 dominate their latency; use a representative tensor size and report both
 end-to-end and resident timings before claiming a speedup.
-The current `MatMul`/`Gemm` baseline is two-dimensional FP32 only; batched
-matrices, FP16/INT8/INT4, runtime dynamic shapes, and control flow still block
-TTV 0.1 package generation. See the
+The current `Gemm` baseline remains two-dimensional FP32. `MatMul` accepts
+static shapes and trailing batch broadcast; FP16/INT8/INT4, runtime dynamic
+shapes, and control flow still block TTV 0.1 package generation. See the
 [`ONNX/Vulkan coverage roadmap`](docs/onnx-vulkan-coverage.md).
 
 ### Test and build

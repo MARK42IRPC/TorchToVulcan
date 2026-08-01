@@ -37,12 +37,18 @@
 
 ## Milestone 4: Useful neural networks
 
-- MatMul/Gemm (二维 FP32 baseline is now implemented), Conv2D, DepthwiseConv,
-  pooling, and Softmax;
+- MatMul/Gemm (二维和静态 batch FP32 baseline);
+- reduction 基础、Softmax 和 LayerNormalization；
 - explicit layout propagation and conversion;
 - tensor lifetime analysis and memory reuse;
 - Vulkan runtime prototype;
-- end-to-end execution of a small static-shape CNN.
+- end-to-end execution of a small static-shape CNN and Transformer block.
+
+Transformer baseline 的阶段、限制和验收证据见
+[`transformer-baseline.md`](transformer-baseline.md)。当前优先顺序是批量
+MatMul、reduction、LayerNorm/Softmax 和静态 block 均已完成第一轮验收；
+当前主线转向 subprogram、host-driven loop 与 KV-cache 契约。性能优化不
+属于这一里程碑的退出条件。
 
 ## Later work
 
@@ -52,6 +58,6 @@
 - FP16 and capability-based kernel selection;
 - operator fusion and autotuning;
 - bounded dynamic shapes;
-- Transformer operators;
+- Transformer operators, static block first and autoregressive orchestration later;
 - INT8 quantization;
 - stable compiled-package distribution and compatibility policy.
