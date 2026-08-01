@@ -1,23 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://torch-to-vulcan.dev/schemas/model-package.schema.json",
-  "title": "Torch to Vulcan compiled model manifest",
-  "description": "Initial manifest contract for a Vulkan runtime package. Binary payloads are stored beside this manifest.",
+  "title": "TTV Executable Package Manifest",
+  "description": "Portable static Vulkan executable package contract.",
   "type": "object",
   "required": [
     "format_version",
-    "graph_schema_version",
     "model_name",
     "target",
+    "entry_program",
     "bindings",
+    "tensors",
     "blobs",
     "shaders",
     "pipelines",
-    "dispatches"
+    "programs",
+    "certificate_store"
   ],
   "properties": {
-    "format_version": { "const": "1.0" },
-    "graph_schema_version": { "const": "1.0" },
+    "format_version": { "const": "0.1" },
     "model_name": { "type": "string", "minLength": 1 },
     "target": {
       "type": "object",
@@ -32,14 +33,20 @@
       },
       "additionalProperties": false
     },
+    "entry_program": { "$ref": "#/$defs/identifier" },
     "bindings": {
       "type": "object",
       "required": ["inputs", "outputs"],
       "properties": {
-        "inputs": { "$ref": "#/$defs/tensorBindings" },
-        "outputs": { "$ref": "#/$defs/tensorBindings" }
+        "inputs": { "$ref": "#/$defs/identifierList" },
+        "outputs": { "$ref": "#/$defs/identifierList" }
       },
       "additionalProperties": false
+    },
+    "tensors": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/tensor" }
     },
     "blobs": {
       "type": "array",
@@ -53,9 +60,19 @@
       "type": "array",
       "items": { "$ref": "#/$defs/pipeline" }
     },
-    "dispatches": {
+    "programs": {
       "type": "array",
-      "items": { "$ref": "#/$defs/dispatch" }
+      "items": { "$ref": "#/$defs/program" }
+    },
+    "certificate_store": {
+      "type": "object",
+      "required": ["file", "sha256", "count"],
+      "properties": {
+        "file": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
     },
     "metadata": {
       "type": "object",
@@ -64,29 +81,82 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "tensorBinding": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "identifierList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/identifier" },
+      "uniqueItems": true
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+    },
+    "tensor": {
       "type": "object",
-      "required": ["tensor_id", "slot"],
+      "required": ["data_type", "shape", "shape_known", "storage"],
       "properties": {
-        "tensor_id": { "type": "string", "minLength": 1 },
-        "slot": { "type": "integer", "minimum": 0 }
+        "data_type": { "type": "string", "minLength": 1 },
+        "shape": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "shape_known": { "const": true },
+        "storage": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": { "kind": { "enum": ["external", "transient"] } },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "blob_id", "offset", "length", "alignment"],
+              "properties": {
+                "kind": { "const": "constant" },
+                "blob_id": { "$ref": "#/$defs/identifier" },
+                "offset": { "type": "integer", "minimum": 0 },
+                "length": { "type": "integer", "minimum": 0 },
+                "alignment": { "type": "integer", "minimum": 1 }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "source_tensor", "byte_offset", "strides"],
+              "properties": {
+                "kind": { "const": "view" },
+                "source_tensor": { "$ref": "#/$defs/identifier" },
+                "byte_offset": { "type": "integer", "minimum": 0 },
+                "strides": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
       },
       "additionalProperties": false
     },
-    "tensorBindings": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/tensorBinding" }
-    },
     "blob": {
       "type": "object",
-      "required": ["id", "file", "offset", "length", "alignment"],
+      "required": ["id", "file", "length", "sha256"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "file": { "type": "string", "minLength": 1 },
-        "offset": { "type": "integer", "minimum": 0 },
+        "id": { "$ref": "#/$defs/identifier" },
+        "file": { "$ref": "#/$defs/relativePath" },
         "length": { "type": "integer", "minimum": 0 },
-        "alignment": { "type": "integer", "minimum": 1 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "sha256": { "$ref": "#/$defs/sha256" }
       },
       "additionalProperties": false
     },
@@ -94,27 +164,44 @@
       "type": "object",
       "required": ["id", "file", "entry_point", "sha256"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "file": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/identifier" },
+        "file": { "$ref": "#/$defs/relativePath" },
         "entry_point": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "debug_source": { "$ref": "#/$defs/relativePath" }
+      },
+      "additionalProperties": false
+    },
+    "descriptor": {
+      "type": "object",
+      "required": ["binding", "kind", "access", "data_type"],
+      "properties": {
+        "binding": { "type": "integer", "minimum": 0 },
+        "kind": { "const": "storage_buffer" },
+        "access": { "enum": ["read", "write", "read_write"] },
+        "data_type": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
     "pipeline": {
       "type": "object",
-      "required": ["id", "shader_id", "descriptor_layout"],
+      "required": ["id", "kernel_id", "shader_id", "descriptor_layout", "push_constant_layout"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "shader_id": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/identifier" },
+        "kernel_id": { "$ref": "#/$defs/identifier" },
+        "shader_id": { "$ref": "#/$defs/identifier" },
         "descriptor_layout": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/descriptor" }
+        },
+        "push_constant_layout": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["binding", "kind"],
+            "required": ["name", "data_type"],
             "properties": {
-              "binding": { "type": "integer", "minimum": 0 },
-              "kind": { "enum": ["storage_buffer", "uniform_buffer", "storage_image"] }
+              "name": { "$ref": "#/$defs/identifier" },
+              "data_type": { "enum": ["uint32", "int32", "float32"] }
             },
             "additionalProperties": false
           }
@@ -122,12 +209,22 @@
       },
       "additionalProperties": false
     },
-    "dispatch": {
+    "resource": {
       "type": "object",
-      "required": ["node_id", "pipeline_id", "workgroups", "resources"],
+      "required": ["binding", "tensor_id"],
       "properties": {
-        "node_id": { "type": "string", "minLength": 1 },
-        "pipeline_id": { "type": "string", "minLength": 1 },
+        "binding": { "type": "integer", "minimum": 0 },
+        "tensor_id": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": false
+    },
+    "dispatchStep": {
+      "type": "object",
+      "required": ["kind", "node_id", "pipeline_id", "workgroups", "resources", "push_constants"],
+      "properties": {
+        "kind": { "const": "dispatch" },
+        "node_id": { "$ref": "#/$defs/identifier" },
+        "pipeline_id": { "$ref": "#/$defs/identifier" },
         "workgroups": {
           "type": "array",
           "prefixItems": [
@@ -139,19 +236,28 @@
         },
         "resources": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["binding", "tensor_id"],
-            "properties": {
-              "binding": { "type": "integer", "minimum": 0 },
-              "tensor_id": { "type": "string", "minLength": 1 }
-            },
-            "additionalProperties": false
-          }
+          "items": { "$ref": "#/$defs/resource" }
+        },
+        "push_constants": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "certificate_id": { "$ref": "#/$defs/identifier" }
+      },
+      "additionalProperties": false
+    },
+    "program": {
+      "type": "object",
+      "required": ["id", "kind", "steps"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "linear" },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/dispatchStep" }
         }
       },
       "additionalProperties": false
     }
   }
 }
-

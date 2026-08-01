@@ -76,7 +76,12 @@ function valueMap(graph: GraphReport): Map<string, TensorValueReport> {
 }
 
 function tensorValue(graph: GraphReport, name: string): TensorValueReport {
-  return valueMap(graph).get(name) ?? { name, data_type: "UNKNOWN", shape: [] };
+  return valueMap(graph).get(name) ?? {
+    name,
+    data_type: "UNKNOWN",
+    shape: [],
+    shape_known: false,
+  };
 }
 
 function unique<T>(values: T[]): T[] {
@@ -90,6 +95,8 @@ function summarizeBus(id: string, tensors: TensorValueReport[]): TensorValueRepo
     name: id,
     data_type: types.length === 1 ? types[0] : "MULTI",
     shape: shapes.length === 1 ? tensors[0]?.shape ?? [] : [],
+    shape_known: tensors.every((tensor) => tensor.shape_known !== false)
+      && shapes.length === 1,
   };
 }
 

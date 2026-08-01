@@ -21,7 +21,7 @@ function Test-Health {
     param([int]$Port)
     try {
         $response = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
-        return $response.status -eq "ok" -and $response.api_version -eq "0.3"
+        return $response.status -eq "ok" -and $response.api_version -eq "0.4"
     } catch {
         return $false
     }

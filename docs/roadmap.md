@@ -28,14 +28,17 @@
 ## Milestone 3: First shaders
 
 - kernel registry and GLSL template infrastructure;
+- backend capability declarations and profile-aware compilation contracts;
 - SPIR-V compilation and validation;
 - FP32 buffer kernels for Add, Mul, Relu, Reshape, and Transpose;
 - Torch reference execution and differential tests;
-- shader and dispatch-plan inspection in the Web UI.
+- shader and dispatch-plan inspection in the Web UI;
+- static root-graph compilation to an integrity-checked TTV 0.1 package.
 
 ## Milestone 4: Useful neural networks
 
-- MatMul/Gemm, Conv2D, DepthwiseConv, pooling, and Softmax;
+- MatMul/Gemm (二维 FP32 baseline is now implemented), Conv2D, DepthwiseConv,
+  pooling, and Softmax;
 - explicit layout propagation and conversion;
 - tensor lifetime analysis and memory reuse;
 - Vulkan runtime prototype;
@@ -43,6 +46,9 @@
 
 ## Later work
 
+- normalized ONNX IR with symbolic dimensions, layouts, subprograms, and
+  quantization metadata (the first normalized tensor/node/graph IR is now in
+  place; subprogram and quantization records remain);
 - FP16 and capability-based kernel selection;
 - operator fusion and autotuning;
 - bounded dynamic shapes;

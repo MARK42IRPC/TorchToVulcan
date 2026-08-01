@@ -20,7 +20,7 @@ fi
 
 echo "[setup] Installing Python dependencies..."
 "$VENV_PATH/bin/python" -m pip install --upgrade pip
-"$VENV_PATH/bin/python" -m pip install -e "$PROJECT_ROOT[dev,web]"
+"$VENV_PATH/bin/python" -m pip install -e "$PROJECT_ROOT[dev,verify,web]"
 
 echo "[setup] Installing WebUI dependencies..."
 cd "$PROJECT_ROOT/web"
@@ -31,4 +31,13 @@ else
 fi
 
 echo "[setup] Dependencies are ready."
+if command -v glslangValidator >/dev/null 2>&1; then
+  echo "[setup] Using glslangValidator from the Vulkan SDK."
+elif [ -d "$PROJECT_ROOT/web/node_modules/@webgpu/glslang" ]; then
+  echo "[setup] Using the bundled @webgpu/glslang SPIR-V compiler."
+else
+  echo "[setup] Warning: no GLSL compiler was found; re-run npm install or install Vulkan SDK."
+fi
+command -v spirv-val >/dev/null 2>&1 ||
+  echo "[setup] spirv-val is optional; Vulkan pipeline creation validates executable SPIR-V."
 echo "[setup] Start development with: ./scripts/dev.sh"

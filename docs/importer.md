@@ -2,7 +2,7 @@
 
 The first importer milestone inspects either a direct ONNX inference model or
 all ONNX models inside a supported archive and reports their operators. It does
-not yet convert ONNX into Graph IR or run shape inference.
+not yet convert ONNX into Graph IR.
 
 ## Command line
 
@@ -23,8 +23,10 @@ JSON output is the integration contract for the first Web UI model browser.
 Its `source_type` identifies the selected adapter, so clients do not need to
 infer it from a path. Each graph also exposes a `values` collection containing
 the tensor element type and shape found in ONNX graph inputs, outputs,
-`value_info`, and initializers. Intermediate values omitted by the source model
-remain `UNKNOWN`; the inspector does not run ONNX shape inference yet.
+`value_info`, and initializers. Before inspection, ONNX shape inference enriches
+intermediate values omitted by the source model. Inference is best-effort: models
+with custom or incomplete schemas fall back to their original metadata and remain
+loadable, so values that cannot be inferred still appear as `UNKNOWN`.
 
 The command exits with:
 

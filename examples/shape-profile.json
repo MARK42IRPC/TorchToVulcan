@@ -1,0 +1,7 @@
+{
+  "name": "batch1-sequence128",
+  "dimensions": {
+    "batch": 1,
+    "sequence": 128
+  }
+}

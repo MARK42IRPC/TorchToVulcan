@@ -1,4 +1,12 @@
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from "react";
 import {
   AlertTriangle,
   Box,
@@ -6,13 +14,16 @@ import {
   Cpu,
   FileArchive,
   FileUp,
+  FlaskConical,
   LoaderCircle,
+  Languages,
   Search,
+  SquareTerminal,
   Upload,
   X,
 } from "lucide-react";
 
-import { inspectModel, MemoryConfirmationError } from "./api";
+import { inspectModel, MemoryConfirmationError, verifyMappings } from "./api";
 import { GraphCanvas } from "./GraphCanvas";
 import { buildHierarchyView, scopeForOperator } from "./hierarchy";
 import type {
@@ -24,7 +35,13 @@ import type {
   MemoryWarning,
   ModelReport,
   OperatorReport,
+  OperatorSemanticsReport,
   TensorValueReport,
+  VerificationCapabilities,
+  VerificationEvent,
+  VerificationLog,
+  VerificationProgress,
+  VerificationSummary,
 } from "./types";
 
 function displayDomain(domain: string): string {
@@ -60,6 +77,15 @@ export default function App() {
   const [error, setError] = useState("");
   const [memoryWarning, setMemoryWarning] = useState<MemoryWarning | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [semanticsLanguage, setSemanticsLanguage] = useState<"zh" | "en">("zh");
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  const [verificationRunning, setVerificationRunning] = useState(false);
+  const [verificationProgress, setVerificationProgress] =
+    useState<VerificationProgress | null>(null);
+  const [verificationLogs, setVerificationLogs] = useState<VerificationLog[]>([]);
+  const [verificationSummary, setVerificationSummary] = useState<VerificationSummary | null>(null);
+  const [verificationCapabilities, setVerificationCapabilities] =
+    useState<VerificationCapabilities | null>(null);
 
   const model = report?.models[modelIndex] ?? null;
   const hierarchyView = useMemo(
@@ -185,6 +211,49 @@ export default function App() {
     });
   };
 
+  const startVerification = useCallback(async () => {
+    if (!report || verificationRunning) return;
+    setVerificationOpen(true);
+    setVerificationRunning(true);
+    setVerificationLogs([]);
+    setVerificationSummary(null);
+    setVerificationCapabilities(null);
+    setVerificationProgress(null);
+    const handleEvent = (event: VerificationEvent) => {
+      if (event.type === "started") {
+        setVerificationCapabilities(event.capabilities);
+        setVerificationProgress({
+          current: 0,
+          total: event.total,
+          percent: 0,
+          operator: "准备验证",
+          status: "STARTED",
+        });
+      } else if (event.type === "log") {
+        setVerificationLogs((logs) => [...logs, event]);
+      } else if (event.type === "progress") {
+        setVerificationProgress(event);
+      } else if (event.type === "result") {
+        setVerificationSummary(event.summary);
+      }
+    };
+    try {
+      await verifyMappings(report, handleEvent);
+    } catch (reason) {
+      setVerificationLogs((logs) => [
+        ...logs,
+        {
+          timestamp: new Date().toISOString(),
+          level: "ERROR",
+          operator: "VERIFY",
+          message: reason instanceof Error ? reason.message : "映射验证失败",
+        },
+      ]);
+    } finally {
+      setVerificationRunning(false);
+    }
+  }, [report, verificationRunning]);
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -199,6 +268,20 @@ export default function App() {
           <span className="signal-dot" />
           IMPORT SERVICE
         </div>
+        <a className="tts-nav-link" href="/tts" title="打开 TTS 听感回归工作台">
+          <span>VOICE LAB</span>
+        </a>
+        <button
+          type="button"
+          className="verify-command"
+          title="验证 Vulkan 映射"
+          aria-label="验证 Vulkan 映射"
+          disabled={!report || verificationRunning}
+          onClick={() => void startVerification()}
+        >
+          <FlaskConical size={16} aria-hidden="true" />
+          <span>验证映射</span>
+        </button>
         <button
           type="button"
           className="icon-command"
@@ -401,6 +484,8 @@ export default function App() {
           model={hierarchyView.model}
           graph={hierarchyView.graph}
           report={report}
+          semanticsLanguage={semanticsLanguage}
+          onSemanticsLanguageChange={setSemanticsLanguage}
         />
       </aside>
 
@@ -445,7 +530,119 @@ export default function App() {
           </section>
         </div>
       )}
+      {verificationOpen && (
+        <VerificationDialog
+          running={verificationRunning}
+          progress={verificationProgress}
+          logs={verificationLogs}
+          summary={verificationSummary}
+          capabilities={verificationCapabilities}
+          onClose={() => setVerificationOpen(false)}
+        />
+      )}
     </main>
+  );
+}
+
+function VerificationDialog({
+  running,
+  progress,
+  logs,
+  summary,
+  capabilities,
+  onClose,
+}: {
+  running: boolean;
+  progress: VerificationProgress | null;
+  logs: VerificationLog[];
+  summary: VerificationSummary | null;
+  capabilities: VerificationCapabilities | null;
+  onClose: () => void;
+}) {
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs]);
+  const current = progress?.current ?? 0;
+  const total = progress?.total ?? 0;
+  return (
+    <div className="dialog-backdrop verification-backdrop" role="presentation">
+      <section
+        className="verification-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="verification-dialog-title"
+      >
+        <header className="verification-dialog__header">
+          <div>
+            <span>VULKAN MAPPING AUDIT</span>
+            <h2 id="verification-dialog-title">计算着色器对比验证</h2>
+          </div>
+          <b className={running ? "is-running" : ""}>
+            {running ? "RUNNING" : "COMPLETE"}
+          </b>
+        </header>
+        <div className="verification-dialog__progress">
+          <div>
+            <span>当前对比算子数 / 总算子</span>
+            <strong>{current} / {total}</strong>
+          </div>
+          <div className="verification-progress-track" aria-label="算子对比进度">
+            <i style={{ width: `${progress?.percent ?? 0}%` }} />
+          </div>
+          <p>
+            <b>{progress?.operator ?? "等待验证任务"}</b>
+            <span>{progress?.status ?? "PENDING"}</span>
+            <em>{(progress?.percent ?? 0).toFixed(0)}%</em>
+          </p>
+        </div>
+        <div className="verification-capabilities">
+          <span title={capabilities?.device_name}>
+            {capabilities?.device_name ?? "检测 Vulkan 设备"}
+          </span>
+          <b className={capabilities?.onnxruntime ? "is-ready" : ""}>ORT</b>
+          <b className={capabilities?.vulkan_binding ? "is-ready" : ""}>VULKAN</b>
+          <b className={capabilities?.glslang_validator ? "is-ready" : ""}>GLSLANG</b>
+          <b className={capabilities?.spirv_val ? "is-ready" : ""}>SPIRV-VAL</b>
+        </div>
+        <div className="verification-log-heading">
+          <span>
+            <SquareTerminal size={14} aria-hidden="true" />对比日志
+          </span>
+          <b>{logs.length} LINES</b>
+        </div>
+        <div className="verification-log" ref={logRef} role="log" aria-live="polite">
+          {logs.map((log, index) => (
+            <div
+              className={`is-${log.level.toLowerCase()}`}
+              key={`${log.timestamp}-${index}`}
+            >
+              <time>
+                {new Date(log.timestamp).toLocaleTimeString("zh-CN", {
+                  hour12: false,
+                })}
+              </time>
+              <b>{log.level}</b>
+              <span>{log.operator}</span>
+              <p>{log.message}</p>
+            </div>
+          ))}
+          {logs.length === 0 && (
+            <span className="verification-log__empty">等待验证日志...</span>
+          )}
+        </div>
+        <footer className="verification-dialog__footer">
+          <div>
+            <span>VERIFIED <b>{summary?.verified ?? 0}</b></span>
+            <span>BLOCKED <b>{summary?.blocked ?? 0}</b></span>
+            <span>FAILED <b>{summary?.failed ?? 0}</b></span>
+          </div>
+          <button type="button" disabled={running} onClick={onClose}>
+            {running ? "验证进行中" : "关闭"}
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -464,11 +661,15 @@ function NodeInspector({
   model,
   graph,
   report,
+  semanticsLanguage,
+  onSemanticsLanguageChange,
 }: {
   node: CanvasNodeData | null;
   model: ModelReport | null;
   graph: GraphReport | null;
   report: InspectionReport | null;
+  semanticsLanguage: "zh" | "en";
+  onSemanticsLanguageChange: (language: "zh" | "en") => void;
 }) {
   if (!node) {
     if (!model && report) {
@@ -497,6 +698,10 @@ function NodeInspector({
     );
   }
 
+  const semantics = node.operator?.semantics_key
+    ? model?.semantics?.find((item) => item.key === node.operator?.semantics_key)
+    : undefined;
+
   return (
     <div className="node-detail">
       <div className="node-detail__title">
@@ -508,6 +713,7 @@ function NodeInspector({
         <dl className="property-list">
           <div><dt>DOMAIN</dt><dd>{displayDomain(node.operator.domain)}</dd></div>
           <div><dt>INDEX</dt><dd>{node.operator.index}</dd></div>
+          <div><dt>OPSET</dt><dd>{node.operator.opset_version ?? "--"}</dd></div>
           <div><dt>GRAPH</dt><dd title={node.operator.graph_path}>{node.operator.graph_path}</dd></div>
           <div><dt>KERNEL</dt><dd className="pending">PENDING</dd></div>
         </dl>
@@ -525,13 +731,83 @@ function NodeInspector({
           <div><dt>ACTION</dt><dd className="pending">DOUBLE CLICK</dd></div>
         </dl>
       )}
+      {node.operator && (
+        <SemanticsPanel
+          semantics={semantics}
+          language={semanticsLanguage}
+          onLanguageChange={onSemanticsLanguageChange}
+        />
+      )}
       <TensorList title="INPUT TENSORS" tensors={node.input_values} />
       <TensorList title="OUTPUT TENSORS" tensors={node.output_values} />
     </div>
   );
 }
 
+function SemanticsPanel({
+  semantics,
+  language,
+  onLanguageChange,
+}: {
+  semantics: OperatorSemanticsReport | undefined;
+  language: "zh" | "en";
+  onLanguageChange: (language: "zh" | "en") => void;
+}) {
+  const supported = semantics?.status === "supported";
+  const pseudocode = language === "zh"
+    ? semantics?.pseudocode_zh
+    : semantics?.pseudocode_en;
+  const diagnostic = language === "zh"
+    ? semantics?.diagnostic_zh
+    : semantics?.diagnostic_en;
+  return (
+    <section className="semantics-panel">
+      <div className="semantics-panel__heading">
+        <span><Languages size={13} aria-hidden="true" />SEMANTICS</span>
+        <div className="language-switch" aria-label="语义语言">
+          <button
+            type="button"
+            className={language === "zh" ? "is-active" : ""}
+            onClick={() => onLanguageChange("zh")}
+          >
+            中
+          </button>
+          <button
+            type="button"
+            className={language === "en" ? "is-active" : ""}
+            onClick={() => onLanguageChange("en")}
+          >
+            EN
+          </button>
+        </div>
+      </div>
+      <div className="semantics-panel__meta">
+        <b className={supported ? "is-supported" : "is-unsupported"}>
+          {supported ? "SUPPORTED" : "UNDEFINED"}
+        </b>
+        <span>{semantics?.category ?? "UNKNOWN"}</span>
+        <span>{formatSemanticsSource(semantics?.source)}</span>
+        <span>{semantics?.confidence ?? "UNKNOWN"}</span>
+        <span>{semantics?.dialect ?? "TTV-Expr 0.1"}</span>
+      </div>
+      {supported ? (
+        <pre>{pseudocode}</pre>
+      ) : (
+        <p>{diagnostic || (language === "zh" ? "该算子的数学语义尚未定义。" : "Operator semantics have not been defined yet.")}</p>
+      )}
+    </section>
+  );
+}
+
+function formatSemanticsSource(source: OperatorSemanticsReport["source"]): string {
+  if (source === "model_function") return "MODEL FUNCTION";
+  if (source === "schema_function") return "SCHEMA FUNCTION";
+  if (source === "registry") return "RULE";
+  return "UNKNOWN SOURCE";
+}
+
 function formatTensorShape(tensor: TensorValueReport): string {
+  if (tensor.shape_known === false) return "RANK ?";
   if (tensor.data_type === "UNKNOWN" && tensor.shape.length === 0) return "UNKNOWN";
   return tensor.shape.length === 0 ? "[]" : `[${tensor.shape.join(" × ")}]`;
 }

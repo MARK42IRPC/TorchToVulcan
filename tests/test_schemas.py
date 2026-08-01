@@ -29,6 +29,16 @@ class JsonSchemaTests(unittest.TestCase):
         example = load_json(REPOSITORY_ROOT / "examples" / "relu.graph.json")
         Draft202012Validator(schema).validate(example)
 
+    def test_model_package_rejects_legacy_flat_manifest(self) -> None:
+        schema = load_json(REPOSITORY_ROOT / "schemas" / "model-package.schema.json")
+        legacy = {
+            "format_version": "1.0",
+            "graph_schema_version": "1.0",
+            "model_name": "legacy",
+        }
+
+        self.assertFalse(Draft202012Validator(schema).is_valid(legacy))
+
 
 if __name__ == "__main__":
     unittest.main()

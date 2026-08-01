@@ -11,12 +11,35 @@ export interface OperatorReport {
   domain: string;
   inputs: string[];
   outputs: string[];
+  opset_version?: number;
+  attributes?: AttributeReport[];
+  semantics_key?: string;
+}
+
+export interface AttributeReport {
+  name: string;
+  kind: string;
+  value: unknown;
+}
+
+export interface OperatorSemanticsReport {
+  key: string;
+  status: "supported" | "unsupported";
+  category: string;
+  dialect: string;
+  pseudocode_en: string;
+  pseudocode_zh: string;
+  diagnostic_en: string;
+  diagnostic_zh: string;
+  source?: "registry" | "model_function" | "schema_function" | "unknown";
+  confidence?: "EXACT_RULE" | "EXACT_FUNCTION" | "UNKNOWN";
 }
 
 export interface TensorValueReport {
   name: string;
   data_type: string;
   shape: string[];
+  shape_known?: boolean;
 }
 
 export interface GraphReport {
@@ -36,6 +59,7 @@ export interface ModelReport {
   producer_version: string;
   opsets: OpsetReport[];
   graphs: GraphReport[];
+  semantics?: OperatorSemanticsReport[];
   operator_count: number;
 }
 
@@ -76,6 +100,64 @@ export interface ImportProgress {
   total: number;
   percent: number;
 }
+
+export interface VerificationTensor {
+  name: string;
+  data_type: string;
+  shape: string[];
+  shape_known: boolean;
+}
+
+export interface VerificationTarget {
+  target_id: string;
+  semantic_key: string;
+  domain: string;
+  op_type: string;
+  opset_version: number;
+  attributes: Record<string, unknown>;
+  inputs: VerificationTensor[];
+  outputs: VerificationTensor[];
+}
+
+export interface VerificationCapabilities {
+  vulkaninfo: string | null;
+  glslang_validator: string | null;
+  spirv_val: string | null;
+  onnxruntime: boolean;
+  vulkan_binding: boolean;
+  executor_available: boolean;
+  device_name: string;
+}
+
+export interface VerificationProgress {
+  current: number;
+  total: number;
+  percent: number;
+  operator: string;
+  status: string;
+}
+
+export interface VerificationLog {
+  timestamp: string;
+  level: "INFO" | "WARN" | "ERROR";
+  operator: string;
+  message: string;
+}
+
+export interface VerificationSummary {
+  total: number;
+  verified: number;
+  blocked: number;
+  failed: number;
+}
+
+export type VerificationEvent =
+  | { type: "started"; total: number; capabilities: VerificationCapabilities }
+  | ({ type: "log" } & VerificationLog)
+  | ({ type: "progress" } & VerificationProgress)
+  | { type: "certificate"; certificate: Record<string, unknown> }
+  | { type: "result"; summary: VerificationSummary }
+  | { type: "error"; message: string };
 
 export type CanvasNodeKind =
   | "input"

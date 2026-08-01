@@ -14,6 +14,27 @@ class OpsetReport:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributeReport:
+    name: str
+    kind: str
+    value: Any
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorSemanticsReport:
+    key: str
+    status: str
+    category: str
+    dialect: str
+    pseudocode_en: str
+    pseudocode_zh: str
+    diagnostic_en: str
+    diagnostic_zh: str
+    source: str
+    confidence: str
+
+
+@dataclass(frozen=True, slots=True)
 class OperatorReport:
     graph_path: str
     index: int
@@ -22,6 +43,9 @@ class OperatorReport:
     domain: str
     inputs: tuple[str, ...]
     outputs: tuple[str, ...]
+    opset_version: int
+    attributes: tuple[AttributeReport, ...]
+    semantics_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +53,7 @@ class TensorValueReport:
     name: str
     data_type: str
     shape: tuple[str, ...]
+    shape_known: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +75,7 @@ class ModelReport:
     producer_version: str
     opsets: tuple[OpsetReport, ...]
     graphs: tuple[GraphReport, ...]
+    semantics: tuple[OperatorSemanticsReport, ...]
 
     @property
     def operator_count(self) -> int:

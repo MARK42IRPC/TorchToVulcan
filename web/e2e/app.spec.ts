@@ -12,6 +12,34 @@ const mockReport = {
       producer_version: "2.7",
       opsets: [{ domain: "", version: 18 }],
       operator_count: 7,
+      semantics: [
+        {
+          key: "ai.onnx::Relu@18:test",
+          status: "supported",
+          category: "ELEMENTWISE",
+          dialect: "TTV-Expr 0.1",
+          pseudocode_en: [
+            "operator Relu",
+            "input  X: Tensor<T>",
+            "output Y: Tensor<T>",
+            "",
+            "parallel index in Y.domain:",
+            "    Y[index] = max(X[index], 0)",
+          ].join("\n"),
+          pseudocode_zh: [
+            "算子 Relu",
+            "输入  X: Tensor<T>",
+            "输出 Y: Tensor<T>",
+            "",
+            "并行遍历 Y.domain 中的 index:",
+            "    Y[index] = 最大值(X[index], 0)",
+          ].join("\n"),
+          diagnostic_en: "",
+          diagnostic_zh: "",
+          source: "registry",
+          confidence: "EXACT_RULE",
+        },
+      ],
       graphs: [
         {
           path: "vision_classifier",
@@ -50,6 +78,9 @@ const mockReport = {
               domain: "",
               inputs: ["features_0"],
               outputs: ["features_1"],
+              opset_version: 18,
+              attributes: [],
+              semantics_key: "ai.onnx::Relu@18:test",
             },
             {
               graph_path: "vision_classifier",
@@ -59,6 +90,9 @@ const mockReport = {
               domain: "",
               inputs: ["features_1"],
               outputs: ["features_2"],
+              opset_version: 18,
+              attributes: [],
+              semantics_key: "ai.onnx::Relu@18:test",
             },
             {
               graph_path: "vision_classifier",
@@ -146,6 +180,18 @@ test("renders and inspects a loaded graph on desktop", async ({ page }) => {
   await expect(reluGroup.locator(".operator-count")).toHaveText("2");
   await expect(page.locator(".node-detail__title > strong")).toHaveText("Relu");
   await expect(page.locator(".property-list").getByText("PENDING")).toBeVisible();
+  const semantics = page.locator(".semantics-panel");
+  await expect(semantics.getByText("SUPPORTED")).toBeVisible();
+  await expect(semantics.getByText("EXACT_RULE")).toBeVisible();
+  await expect(semantics.locator("pre")).toContainText("算子 Relu");
+  await expect(semantics.locator("pre")).toContainText("最大值(X[index], 0)");
+  await semantics.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(semantics.locator("pre")).toContainText("operator Relu");
+  await expect(semantics.locator("pre")).toContainText("max(X[index], 0)");
+  await page.getByRole("button", { name: /Conv/ }).click();
+  await page.getByRole("button", { name: /Relu/ }).click();
+  await expect(semantics.getByRole("button", { name: "EN", exact: true })).toHaveClass(/is-active/);
+  await expect(semantics.locator("pre")).toContainText("operator Relu");
   await expect(page.locator(".tensor-list").first().getByText("FLOAT")).toBeVisible();
   await expect(
     page.locator(".tensor-list").first().getByText("[1 × 32 × 112 × 112]"),
@@ -183,6 +229,77 @@ test("keeps controls within the mobile viewport", async ({ page }) => {
   );
   expect(overflow).toBe(false);
   await page.screenshot({ path: "test-results/webui-mobile.png", fullPage: true });
+});
+
+test("streams Vulkan mapping progress and audit logs in a dialog", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await loadMockModel(page);
+  await page.route("**/api/verify/stream", async (route) => {
+    const request = route.request().postDataJSON() as { targets: unknown[] };
+    expect(request.targets).toHaveLength(6);
+    const events = [
+      {
+        type: "started",
+        total: 2,
+        capabilities: {
+          vulkaninfo: "vulkaninfo.exe",
+          glslang_validator: null,
+          spirv_val: null,
+          onnxruntime: true,
+          vulkan_binding: true,
+          executor_available: false,
+          device_name: "NVIDIA Test GPU",
+        },
+      },
+      {
+        type: "log",
+        timestamp: "2026-08-01T00:00:00.000Z",
+        level: "INFO",
+        operator: "ai.onnx::Relu",
+        message: "[1/2] 开始选择 Kernel Candidate",
+      },
+      {
+        type: "progress",
+        current: 1,
+        total: 2,
+        percent: 50,
+        operator: "Relu",
+        status: "BLOCKED",
+      },
+      {
+        type: "log",
+        timestamp: "2026-08-01T00:00:01.000Z",
+        level: "WARN",
+        operator: "ai.onnx::Add",
+        message: "缺少 glslangValidator，无法编译 GLSL 为 SPIR-V",
+      },
+      {
+        type: "progress",
+        current: 2,
+        total: 2,
+        percent: 100,
+        operator: "Add",
+        status: "BLOCKED",
+      },
+      { type: "result", summary: { total: 2, verified: 0, blocked: 2, failed: 0 } },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    });
+  });
+
+  await page.getByRole("button", { name: "验证 Vulkan 映射" }).click();
+  const dialog = page.getByRole("dialog", { name: "计算着色器对比验证" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("2 / 2")).toBeVisible();
+  await expect(dialog.getByText("缺少 glslangValidator，无法编译 GLSL 为 SPIR-V")).toBeVisible();
+  await expect(dialog.getByText("BLOCKED 2")).toBeVisible();
+  await expect(dialog.getByText("NVIDIA Test GPU")).toBeVisible();
+  await page.screenshot({ path: "test-results/vulkan-verification-dialog.png", fullPage: true });
+  await dialog.getByRole("button", { name: "关闭" }).click();
+  await expect(dialog).toBeHidden();
 });
 
 test("asks before loading a model above the memory threshold", async ({ page }) => {

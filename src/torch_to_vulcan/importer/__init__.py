@@ -14,17 +14,20 @@ from .inspector import (
     supported_input_suffixes,
 )
 from .report import (
+    AttributeReport,
     GraphReport,
     InspectionReport,
     ModelError,
     ModelReport,
     OperatorCount,
     OperatorReport,
+    OperatorSemanticsReport,
     OpsetReport,
     TensorValueReport,
 )
 
 __all__ = [
+    "AttributeReport",
     "GraphReport",
     "InspectionError",
     "InspectionLimits",
@@ -34,6 +37,7 @@ __all__ = [
     "ModelReport",
     "OperatorCount",
     "OperatorReport",
+    "OperatorSemanticsReport",
     "OpsetReport",
     "TensorValueReport",
     "inspect_7z",

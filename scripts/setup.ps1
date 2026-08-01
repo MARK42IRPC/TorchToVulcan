@@ -23,7 +23,7 @@ if (-not (Test-Path -LiteralPath $PythonPath)) {
 Write-Host "[setup] Installing Python dependencies..."
 & $PythonPath -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip." }
-& $PythonPath -m pip install -e "$ProjectRoot[dev,web]"
+& $PythonPath -m pip install -e "$ProjectRoot[dev,verify,web]"
 if ($LASTEXITCODE -ne 0) { throw "Failed to install Python dependencies." }
 
 Write-Host "[setup] Installing WebUI dependencies..."
@@ -40,4 +40,14 @@ try {
 }
 
 Write-Host "[setup] Dependencies are ready."
+if (Get-Command glslangValidator -ErrorAction SilentlyContinue) {
+    Write-Host "[setup] Using glslangValidator from the Vulkan SDK."
+} elseif (Test-Path -LiteralPath (Join-Path $ProjectRoot "web\node_modules\@webgpu\glslang")) {
+    Write-Host "[setup] Using the bundled @webgpu/glslang SPIR-V compiler."
+} else {
+    Write-Warning "No GLSL compiler was found. Re-run npm install or install the Vulkan SDK."
+}
+if (-not (Get-Command spirv-val -ErrorAction SilentlyContinue)) {
+    Write-Host "[setup] spirv-val is optional; Vulkan pipeline creation still validates executable SPIR-V."
+}
 Write-Host "[setup] Start development with: .\scripts\dev.ps1"

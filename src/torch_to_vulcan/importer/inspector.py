@@ -21,14 +21,26 @@ import psutil
 import py7zr
 import rarfile
 from google.protobuf.message import DecodeError
-from onnx import AttributeProto, GraphProto, ModelProto, TensorProto, TypeProto, ValueInfoProto
+from onnx import (
+    AttributeProto,
+    GraphProto,
+    ModelProto,
+    TensorProto,
+    TypeProto,
+    ValueInfoProto,
+    numpy_helper,
+)
+
+from torch_to_vulcan.compiler.onnx import NodeContext, SemanticResolver, TensorSpec
 
 from .report import (
+    AttributeReport,
     GraphReport,
     InspectionReport,
     ModelError,
     ModelReport,
     OperatorReport,
+    OperatorSemanticsReport,
     OpsetReport,
     TensorValueReport,
 )
@@ -624,9 +636,23 @@ def _inspect_model_bytes(
         return
     try:
         model = onnx.load_model_from_string(data)
+        model = _infer_model_shapes(model)
         report.models.append(_inspect_model(model_path, model))
     except (DecodeError, OSError, ValueError) as error:
         report.errors.append(ModelError(model_path, str(error) or type(error).__name__))
+
+
+def _infer_model_shapes(model: ModelProto) -> ModelProto:
+    """Enrich intermediate tensor metadata without making import depend on inference."""
+    try:
+        return onnx.shape_inference.infer_shapes(
+            model,
+            check_type=False,
+            strict_mode=False,
+            data_prop=False,
+        )
+    except (onnx.shape_inference.InferenceError, RuntimeError, ValueError):
+        return model
 
 
 def _validate_archive_sizes(
@@ -739,11 +765,14 @@ def _onnx_entries(archive: ZipFile, limits: InspectionLimits) -> list[ZipInfo]:
 def _inspect_model(model_path: str, model: ModelProto) -> ModelReport:
     root_name = model.graph.name or "main"
     graphs: list[GraphReport] = []
-    _inspect_graph(model.graph, root_name, graphs)
     opsets = tuple(
         OpsetReport(domain=opset.domain, version=opset.version)
         for opset in sorted(model.opset_import, key=lambda item: item.domain)
     )
+    opset_versions = {opset.domain: opset.version for opset in model.opset_import}
+    semantics: dict[str, OperatorSemanticsReport] = {}
+    resolver = SemanticResolver(model.functions)
+    _inspect_graph(model.graph, root_name, graphs, opset_versions, semantics, resolver)
     return ModelReport(
         path=model_path,
         graph_name=root_name,
@@ -752,12 +781,64 @@ def _inspect_model(model_path: str, model: ModelProto) -> ModelReport:
         producer_version=model.producer_version,
         opsets=opsets,
         graphs=tuple(graphs),
+        semantics=tuple(semantics.values()),
     )
 
 
-def _inspect_graph(graph: GraphProto, path: str, reports: list[GraphReport]) -> None:
-    operators = tuple(
-        OperatorReport(
+def _inspect_graph(
+    graph: GraphProto,
+    path: str,
+    reports: list[GraphReport],
+    opset_versions: dict[str, int],
+    semantics: dict[str, OperatorSemanticsReport],
+    resolver: SemanticResolver,
+) -> None:
+    tensor_values = _inspect_tensor_values(graph)
+    tensor_values_by_name = {value.name: value for value in tensor_values}
+    small_constants = _small_constant_values(graph)
+    operators: list[OperatorReport] = []
+    for index, node in enumerate(graph.node):
+        attributes = tuple(_attribute_report(attribute) for attribute in node.attribute)
+        attribute_values = {attribute.name: attribute.value for attribute in attributes}
+        opset_version = opset_versions.get(node.domain, 0)
+        input_specs = tuple(
+            _tensor_spec(name, tensor_values_by_name) for name in node.input
+        )
+        output_specs = tuple(
+            _tensor_spec(name, tensor_values_by_name) for name in node.output
+        )
+        definition = resolver.resolve(
+            NodeContext(
+                domain=node.domain,
+                op_type=node.op_type,
+                opset_version=opset_version,
+                attributes=attribute_values,
+                inputs=input_specs,
+                outputs=output_specs,
+                constant_inputs={
+                    name: small_constants[name]
+                    for name in node.input
+                    if name in small_constants
+                },
+                overload=getattr(node, "overload", ""),
+            )
+        )
+        semantics.setdefault(
+            definition.key,
+            OperatorSemanticsReport(
+                key=definition.key,
+                status=definition.status,
+                category=definition.category,
+                dialect=definition.dialect,
+                pseudocode_en=definition.pseudocode_en,
+                pseudocode_zh=definition.pseudocode_zh,
+                diagnostic_en=definition.diagnostic_en,
+                diagnostic_zh=definition.diagnostic_zh,
+                source=definition.source,
+                confidence=definition.confidence,
+            ),
+        )
+        operators.append(OperatorReport(
             graph_path=path,
             index=index,
             name=node.name,
@@ -765,17 +846,18 @@ def _inspect_graph(graph: GraphProto, path: str, reports: list[GraphReport]) -> 
             domain=node.domain,
             inputs=tuple(node.input),
             outputs=tuple(node.output),
-        )
-        for index, node in enumerate(graph.node)
-    )
+            opset_version=opset_version,
+            attributes=attributes,
+            semantics_key=definition.key,
+        ))
     reports.append(
         GraphReport(
             path=path,
             name=graph.name,
             inputs=tuple(value.name for value in graph.input),
             outputs=tuple(value.name for value in graph.output),
-            values=_inspect_tensor_values(graph),
-            operators=operators,
+            values=tensor_values,
+            operators=tuple(operators),
         )
     )
 
@@ -784,11 +866,147 @@ def _inspect_graph(graph: GraphProto, path: str, reports: list[GraphReport]) -> 
         for attribute in node.attribute:
             if attribute.type == AttributeProto.GRAPH:
                 child_path = f"{path}/{node_segment}.{attribute.name}"
-                _inspect_graph(attribute.g, child_path, reports)
+                _inspect_graph(
+                    attribute.g,
+                    child_path,
+                    reports,
+                    opset_versions,
+                    semantics,
+                    resolver,
+                )
             elif attribute.type == AttributeProto.GRAPHS:
                 for graph_index, child_graph in enumerate(attribute.graphs):
                     child_path = f"{path}/{node_segment}.{attribute.name}[{graph_index}]"
-                    _inspect_graph(child_graph, child_path, reports)
+                    _inspect_graph(
+                        child_graph,
+                        child_path,
+                        reports,
+                        opset_versions,
+                        semantics,
+                        resolver,
+                    )
+
+
+def _attribute_report(attribute: AttributeProto) -> AttributeReport:
+    try:
+        kind = AttributeProto.AttributeType.Name(attribute.type)
+    except (KeyError, ValueError):
+        kind = f"TYPE_{attribute.type}"
+    return AttributeReport(
+        name=attribute.name,
+        kind=kind,
+        value=_attribute_value(attribute),
+    )
+
+
+def _attribute_value(attribute: AttributeProto) -> object:
+    if attribute.type == AttributeProto.FLOAT:
+        return attribute.f
+    if attribute.type == AttributeProto.INT:
+        return attribute.i
+    if attribute.type == AttributeProto.STRING:
+        return attribute.s.decode("utf-8", errors="replace")
+    if attribute.type == AttributeProto.FLOATS:
+        return list(attribute.floats)
+    if attribute.type == AttributeProto.INTS:
+        return list(attribute.ints)
+    if attribute.type == AttributeProto.STRINGS:
+        return [value.decode("utf-8", errors="replace") for value in attribute.strings]
+    if attribute.type == AttributeProto.TENSOR:
+        return _tensor_attribute_summary(attribute.t)
+    if attribute.type == AttributeProto.TENSORS:
+        return [_tensor_attribute_summary(value) for value in attribute.tensors]
+    if attribute.type == AttributeProto.SPARSE_TENSOR:
+        return {
+            "data_type": _tensor_data_type_name(attribute.sparse_tensor.values.data_type),
+            "shape": list(attribute.sparse_tensor.dims),
+        }
+    if attribute.type == AttributeProto.SPARSE_TENSORS:
+        return [
+            {
+                "data_type": _tensor_data_type_name(value.values.data_type),
+                "shape": list(value.dims),
+            }
+            for value in attribute.sparse_tensors
+        ]
+    if attribute.type == AttributeProto.GRAPH:
+        return {"graph": attribute.g.name}
+    if attribute.type == AttributeProto.GRAPHS:
+        return [{"graph": value.name} for value in attribute.graphs]
+    if attribute.type == AttributeProto.TYPE_PROTO:
+        return {"type": _type_name(attribute.tp)}
+    if attribute.type == AttributeProto.TYPE_PROTOS:
+        return [{"type": _type_name(value)} for value in attribute.type_protos]
+    return None
+
+
+def _tensor_attribute_summary(tensor: TensorProto) -> dict[str, object]:
+    return {
+        "data_type": _tensor_data_type_name(tensor.data_type),
+        "shape": list(tensor.dims),
+    }
+
+
+def _tensor_spec(
+    name: str,
+    values: dict[str, TensorValueReport],
+) -> TensorSpec:
+    value = values.get(name)
+    if value is None:
+        return TensorSpec(name=name, data_type="UNKNOWN", shape=())
+    return TensorSpec(
+        name=name,
+        data_type=value.data_type,
+        shape=value.shape,
+    )
+
+
+def _small_constant_values(graph: GraphProto, limit: int = 16) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for initializer in graph.initializer:
+        value = _small_tensor_value(initializer, limit)
+        if initializer.name and value is not None:
+            values[initializer.name] = value
+
+    for node in graph.node:
+        if node.domain or node.op_type != "Constant" or not node.output:
+            continue
+        for attribute in node.attribute:
+            value = _small_constant_attribute(attribute, limit)
+            if value is not None:
+                values[node.output[0]] = value
+                break
+    return values
+
+
+def _small_constant_attribute(attribute: AttributeProto, limit: int) -> object | None:
+    if not attribute.name.startswith("value"):
+        return None
+    if attribute.type == AttributeProto.TENSOR:
+        return _small_tensor_value(attribute.t, limit)
+    value = _attribute_value(attribute)
+    if isinstance(value, list):
+        return tuple(value) if len(value) <= limit else None
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    return None
+
+
+def _small_tensor_value(tensor: TensorProto, limit: int) -> object | None:
+    if tensor.data_location == TensorProto.EXTERNAL or tensor.external_data:
+        return None
+    element_count = 1
+    for dimension in tensor.dims:
+        element_count *= dimension
+    if element_count > limit:
+        return None
+    try:
+        values = numpy_helper.to_array(tensor).reshape(-1).tolist()
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    if len(values) == 1 and not tensor.dims:
+        return values[0]
+    return tuple(values)
 
 
 def _inspect_tensor_values(graph: GraphProto) -> tuple[TensorValueReport, ...]:
@@ -820,6 +1038,7 @@ def _value_info_report(value: ValueInfoProto) -> TensorValueReport:
         name=value.name,
         data_type=_type_name(value.type),
         shape=_type_shape(value.type),
+        shape_known=_type_has_shape(value.type),
     )
 
 
@@ -848,6 +1067,18 @@ def _type_shape(value_type: TypeProto) -> tuple[str, ...]:
     if value_type.HasField("optional_type"):
         return _type_shape(value_type.optional_type.elem_type)
     return ()
+
+
+def _type_has_shape(value_type: TypeProto) -> bool:
+    if value_type.HasField("tensor_type"):
+        return value_type.tensor_type.HasField("shape")
+    if value_type.HasField("sparse_tensor_type"):
+        return value_type.sparse_tensor_type.HasField("shape")
+    if value_type.HasField("sequence_type"):
+        return _type_has_shape(value_type.sequence_type.elem_type)
+    if value_type.HasField("optional_type"):
+        return _type_has_shape(value_type.optional_type.elem_type)
+    return False
 
 
 def _shape_dimensions(dimensions: Iterable[object]) -> tuple[str, ...]:

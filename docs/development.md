@@ -8,8 +8,13 @@
 - PowerShell 7, Bash, or another shell capable of invoking Python;
 - a Python virtual environment.
 
-Torch, Zig, the Vulkan SDK, and shader compiler dependencies remain deferred
-until the component that needs each tool is introduced.
+Vulkan mapping verification additionally requires a Vulkan-capable driver. The
+setup script installs ONNX Runtime, the Python Vulkan loader binding, and a
+portable glslang compiler. A full Vulkan SDK is optional; when present its native
+`glslangValidator` and `spirv-val` tools take precedence.
+
+Torch and Zig remain deferred until the component that needs each tool is
+introduced.
 
 ## Setup
 
@@ -45,6 +50,8 @@ Start both development servers with `.\scripts\dev.ps1` on Windows or
    fixture.
 6. Validate generated SPIR-V and compare kernel output against a reference
    implementation before declaring an operator supported.
+7. Put symbolic dimension bindings in `ShapeProfile`; do not smuggle profile
+   values through kernel attributes or package metadata alone.
 
 ## Branch and commit convention
 
@@ -71,6 +78,12 @@ An operator is not considered supported until it has:
 
 The UI support indicator must be derived from the compiler registry rather than
 maintained as a separate hard-coded list.
+
+The current static compiler accepts a profile with `ttv compile --shape-profile`
+and records the selected profile in package metadata. A profile specializes one
+concrete shape; it does not authorize runtime shape changes. Runtime profiles,
+bounded symbolic expressions, and multi-profile packages belong to the next
+package format.
 
 ## Generated files
 

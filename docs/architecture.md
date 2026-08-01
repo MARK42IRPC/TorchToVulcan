@@ -13,7 +13,10 @@ ONNX model
 Python importer -----> Graph IR <-----> React Web UI
                            |
                            v
-                    compiler passes
+                    TTV-Expr semantic IR
+                           |
+                           v
+                    schedule/kernel IR
                            |
               +------------+------------+
               |                         |
@@ -32,6 +35,11 @@ Python importer -----> Graph IR <-----> React Web UI
 
 Torch is a reference backend for numerical comparison. It is deliberately not
 an intermediate representation and is not part of the production runtime.
+
+The long-term ONNX and Vulkan coverage contract is defined in
+[`onnx-vulkan-coverage.md`](onnx-vulkan-coverage.md). It separates semantic
+support, normalization, backend lowering, SPIR-V compilation, and device
+verification instead of treating them as one boolean operator flag.
 
 ## Components
 
@@ -65,8 +73,10 @@ surrounding ONNX graph is acyclic. Every input and output port has a separate
 XYFlow handle so parallel tensor edges do not share a single endpoint.
 The operator navigator groups identical `(domain, op_type)` pairs while retaining
 the first concrete node as its selection target. Tensor types and shapes are read
-from the inspection report; missing intermediate metadata is rendered as
-`UNKNOWN` instead of being inferred in the browser.
+from the inspection report after best-effort ONNX shape inference; missing
+intermediate metadata is rendered as `UNKNOWN` instead of being inferred in the
+browser. Tensor reports carry `shape_known` so an unknown rank cannot be confused
+with a zero-dimensional scalar.
 
 #### Hierarchical preview
 
@@ -114,6 +124,67 @@ and Torch ecosystems. Its responsibilities are:
 The HTTP API will be a thin adapter around compiler application services. Core
 passes must remain callable without starting a server.
 
+### Operator semantic language
+
+`TTV-Expr 0.1` is the structured, hardware-independent mathematical layer
+between normalized Graph IR and kernel scheduling. Each supported ONNX operator
+is lowered into a structured expression AST containing tensor accesses,
+assignments, constraints, parallel iteration, and metadata-only views. Compiler
+passes consume this AST; formatted pseudocode is never parsed back into the
+compiler.
+
+Semantic resolution receives a `NodeContext` containing the operator domain,
+opset, attributes, input/output tensor specifications, overload, and small
+constant inputs. Resolution order is:
+
+1. expand a matching model-local `FunctionProto`;
+2. apply an audited versioned registry rule;
+3. expand a static function body published by the ONNX operator schema;
+4. report the operator as unknown.
+
+Function bodies lower to structured `Invoke` statements rather than formatted
+strings, so later compiler passes can recursively lower the decomposition.
+Context-dependent schema functions are deferred until their type/shape API can
+be supplied completely. The importer may bind scalar or small tensor constants
+of at most 16 elements, such as axes and target sizes. It never reads large
+weights into semantic reports.
+
+The registry is version-aware and chooses a definition from the ONNX domain,
+operator type, opset, and semantically relevant attributes. A model report stores
+each resulting definition once under a stable semantic key, while operator
+instances only reference that key. This avoids repeating the same explanation
+for graphs containing thousands of identical operators. Tensor-valued ONNX
+attributes are represented by type and shape summaries rather than embedded
+payloads.
+
+Every expression program has English and Chinese pretty-printers over the same
+AST. The Web UI defaults to Chinese and can switch languages without reimporting
+the model; the selection remains active while navigating between nodes. Stable
+symbols such as tensor names and indices are intentionally unchanged between
+languages so the two renderings can be compared line by line. An undefined
+operator is reported explicitly and must not be mistaken for a compilable
+kernel.
+
+Each definition reports its provenance and confidence. `EXACT_FUNCTION` means
+the expression came from an ONNX function body, `EXACT_RULE` means it came from
+an audited registry rule, and `UNKNOWN` means no semantic lowering exists.
+Reference-runtime differential verification is recorded as a separate compiler
+certificate; neither exact source category claims that a Vulkan kernel has passed
+numerical validation.
+
+The foundational semantic catalog covers elementwise arithmetic and comparisons,
+shape and view operations, indexing, layout transforms, reductions, type
+conversion, quantization, normalization, convolution, and linear algebra. `Cast`
+records the target tensor type and version-specific float8 saturation and rounding
+controls. `Reshape` is classified as a view that normally emits no compute shader,
+while `Transpose` records a layout transformation.
+
+Control flow, sequence manipulation, signal transforms, and vendor-specific
+operators require dedicated semantic designs and remain explicitly undefined until
+those designs exist. This semantic support does not by itself mean that a Vulkan
+kernel exists; scheduling, validation, and reference comparison remain separate
+later stages.
+
 ### Kernel registry
 
 Each normalized operator owns separate contracts for shape inference, Torch
@@ -121,12 +192,28 @@ reference behavior, and Vulkan kernel candidates. A candidate declares its
 supported data types, layouts, device capabilities, specialization constants,
 and cost estimate. This keeps PyTorch behavior out of shader generation.
 
+Vulkan lowering returns a `DispatchPlan`, not necessarily one shader. A plan may
+contain zero dispatches for metadata-only views, one dispatch for simple
+elementwise kernels, or multiple dispatches and barriers for reductions and
+other staged algorithms. Mapping verification is incremental and auditable; see
+[`vulkan-verification.md`](vulkan-verification.md).
+
+Verified plans become durable only after package materialization. The executable
+package contract, artifact hashing, constant layout, and staged implementation are
+defined in [`executable-package.md`](executable-package.md).
+
 ### Vulkan runtime
 
-The runtime only loads a compiled package, allocates resources, creates cached
-pipelines, and submits the recorded dispatch plan. Zig is the preferred
-language candidate for this component; the choice is deferred until the model
-package and execution plan stabilize.
+The Python verification runtime can allocate host-visible buffers or opt into
+device-local tensor buffers with persistent staging allocations. It creates
+descriptor sets and compute pipelines, records linear dispatch/copy command
+variants, inserts transfer/compute/host barriers, waits on a fence, and compares
+GPU output with ONNX Runtime. The device-local path establishes the first real
+GPU execution baseline, but readback and queue synchronization still dominate
+small or I/O-heavy graphs; tensor arenas, lifetime reuse, fusion, and async
+double buffering remain production-runtime work. Zig remains the preferred
+language candidate for the packaged runtime after the package and execution
+plan stabilize.
 
 ## Dependency direction
 

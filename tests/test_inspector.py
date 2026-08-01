@@ -16,6 +16,7 @@ from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import py7zr
+import onnx
 from onnx import TensorProto, helper
 
 from torch_to_vulcan.cli import main
@@ -69,6 +70,87 @@ def make_if_model() -> bytes:
     )
     graph = helper.make_graph([if_node], "conditional", [condition, x], [y])
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)]).SerializeToString()
+
+
+def make_transpose_chain_model() -> bytes:
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 2, 3])
+    output_info = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 2, 3])
+    nodes = [
+        helper.make_node("Transpose", ["input"], ["middle"], name="transpose_0", perm=[0, 2, 1]),
+        helper.make_node("Transpose", ["middle"], ["output"], name="transpose_1", perm=[0, 2, 1]),
+    ]
+    graph = helper.make_graph(nodes, "transpose_chain", [input_info], [output_info])
+    graph.value_info.append(
+        helper.make_tensor_value_info("middle", TensorProto.FLOAT, [1, 3, 2])
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 18)],
+    ).SerializeToString()
+
+
+def make_unannotated_relu_chain_model() -> bytes:
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, ["batch", 4])
+    output_info = helper.make_tensor_value_info("output", TensorProto.FLOAT, ["batch", 4])
+    nodes = [
+        helper.make_node("Relu", ["input"], ["middle"], name="relu_0"),
+        helper.make_node("Relu", ["middle"], ["output"], name="relu_1"),
+    ]
+    graph = helper.make_graph(nodes, "relu_chain", [input_info], [output_info])
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 18)],
+    ).SerializeToString()
+
+
+def make_cast_model() -> bytes:
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4])
+    output_info = helper.make_tensor_value_info("output", TensorProto.INT32, [1, 4])
+    node = helper.make_node("Cast", ["input"], ["output"], name="cast_0", to=TensorProto.INT32)
+    graph = helper.make_graph([node], "cast_graph", [input_info], [output_info])
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 18)],
+    ).SerializeToString()
+
+
+def make_local_function_model() -> bytes:
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4])
+    output_info = helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4])
+    node = helper.make_node("Double", ["input"], ["output"], domain="local")
+    graph = helper.make_graph([node], "local_function_graph", [input_info], [output_info])
+    function = helper.make_function(
+        "local",
+        "Double",
+        ["X"],
+        ["Y"],
+        [helper.make_node("Add", ["X", "X"], ["Y"])],
+        opset_imports=[helper.make_opsetid("", 18)],
+    )
+    model = helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 18), helper.make_opsetid("local", 1)],
+    )
+    model.functions.extend([function])
+    return model.SerializeToString()
+
+
+def make_unsqueeze_with_constant_axes_model() -> bytes:
+    input_info = helper.make_tensor_value_info("input", TensorProto.FLOAT, [2, 4])
+    output_info = helper.make_tensor_value_info("output", TensorProto.FLOAT, [2, 1, 4])
+    axes = helper.make_tensor("axes", TensorProto.INT64, [1], [1])
+    node = helper.make_node("Unsqueeze", ["input", "axes"], ["output"])
+    graph = helper.make_graph(
+        [node],
+        "constant_axes_graph",
+        [input_info],
+        [output_info],
+        initializer=[axes],
+    )
+    return helper.make_model(
+        graph,
+        opset_imports=[helper.make_opsetid("", 18)],
+    ).SerializeToString()
 
 
 class OnnxInspectorTests(unittest.TestCase):
@@ -149,6 +231,117 @@ class OnnxInspectorTests(unittest.TestCase):
         self.assertEqual(values["input"].data_type, "FLOAT")
         self.assertEqual(values["input"].shape, ("1", "4"))
         self.assertEqual(values["output"].data_type, "FLOAT")
+
+    def test_reports_attributes_opset_and_deduplicated_operator_semantics(self) -> None:
+        path = self.temporary_path("transpose.onnx")
+        path.write_bytes(make_transpose_chain_model())
+
+        report = inspect_path(path)
+
+        model = report.models[0]
+        operators = model.graphs[0].operators
+        self.assertEqual([operator.opset_version for operator in operators], [18, 18])
+        self.assertEqual(operators[0].attributes[0].name, "perm")
+        self.assertEqual(operators[0].attributes[0].kind, "INTS")
+        self.assertEqual(operators[0].attributes[0].value, [0, 2, 1])
+        self.assertEqual(operators[0].semantics_key, operators[1].semantics_key)
+        self.assertEqual(len(model.semantics), 1)
+        self.assertEqual(model.semantics[0].category, "LAYOUT")
+        self.assertIn("attribute perm = [0, 2, 1]", model.semantics[0].pseudocode_en)
+        self.assertIn("属性 perm = [0, 2, 1]", model.semantics[0].pseudocode_zh)
+
+    def test_shape_inference_reports_unannotated_intermediate_values(self) -> None:
+        path = self.temporary_path("relu-chain.onnx")
+        path.write_bytes(make_unannotated_relu_chain_model())
+
+        report = inspect_path(path)
+
+        values = {value.name: value for value in report.models[0].graphs[0].values}
+        self.assertEqual(values["middle"].data_type, "FLOAT")
+        self.assertEqual(values["middle"].shape, ("batch", "4"))
+
+    def test_shape_inference_failure_falls_back_to_original_model(self) -> None:
+        path = self.temporary_path("relu.onnx")
+        path.write_bytes(make_unary_model("Relu", graph_name="fallback"))
+
+        with patch(
+            "torch_to_vulcan.importer.inspector.onnx.shape_inference.infer_shapes",
+            side_effect=onnx.shape_inference.InferenceError("unsupported custom schema"),
+        ):
+            report = inspect_path(path)
+
+        self.assertEqual(len(report.models), 1)
+        self.assertEqual(report.models[0].graph_name, "fallback")
+        self.assertEqual(report.errors, [])
+
+    def test_distinguishes_unknown_rank_from_a_scalar(self) -> None:
+        from torch_to_vulcan.importer import inspector
+
+        unknown_rank = inspector._value_info_report(
+            helper.make_tensor_value_info("unknown", TensorProto.FLOAT, None)
+        )
+        scalar = inspector._value_info_report(
+            helper.make_tensor_value_info("scalar", TensorProto.FLOAT, [])
+        )
+
+        self.assertFalse(unknown_rank.shape_known)
+        self.assertTrue(scalar.shape_known)
+        self.assertEqual(unknown_rank.shape, ())
+        self.assertEqual(scalar.shape, ())
+
+    def test_lowers_cast_attributes_into_readable_semantics(self) -> None:
+        path = self.temporary_path("cast.onnx")
+        path.write_bytes(make_cast_model())
+
+        report = inspect_path(path)
+
+        operator = report.models[0].graphs[0].operators[0]
+        semantics = report.models[0].semantics[0]
+        self.assertEqual(operator.op_type, "Cast")
+        self.assertEqual(operator.attributes[0].name, "to")
+        self.assertEqual(operator.attributes[0].value, TensorProto.INT32)
+        self.assertEqual(semantics.status, "supported")
+        self.assertEqual(semantics.category, "CONVERSION")
+        self.assertIn("Tensor<INT32>", semantics.pseudocode_en)
+        self.assertIn("类型转换(X[index], to)", semantics.pseudocode_zh)
+
+    def test_expands_model_local_function_semantics(self) -> None:
+        path = self.temporary_path("local-function.onnx")
+        path.write_bytes(make_local_function_model())
+
+        report = inspect_path(path)
+
+        semantics = report.models[0].semantics[0]
+        self.assertEqual(semantics.status, "supported")
+        self.assertEqual(semantics.category, "COMPOSITE")
+        self.assertEqual(semantics.source, "model_function")
+        self.assertEqual(semantics.confidence, "EXACT_FUNCTION")
+        self.assertIn("Y = Add(X, X)", semantics.pseudocode_en)
+
+    def test_specializes_semantics_with_small_initializer_inputs(self) -> None:
+        path = self.temporary_path("constant-axes.onnx")
+        path.write_bytes(make_unsqueeze_with_constant_axes_model())
+
+        report = inspect_path(path)
+
+        semantics = report.models[0].semantics[0]
+        self.assertIn("known input axes = [1]", semantics.pseudocode_en)
+        self.assertIn("已知输入 axes = [1]", semantics.pseudocode_zh)
+
+    def test_does_not_read_external_initializer_for_semantic_binding(self) -> None:
+        from torch_to_vulcan.importer import inspector
+
+        tensor = TensorProto(
+            name="external_scalar",
+            data_type=TensorProto.FLOAT,
+            dims=[1],
+            data_location=TensorProto.EXTERNAL,
+        )
+        location = tensor.external_data.add()
+        location.key = "location"
+        location.value = "weights.bin"
+
+        self.assertIsNone(inspector._small_tensor_value(tensor, 16))
 
     def test_reports_tensor_values_for_each_nested_graph(self) -> None:
         path = self.temporary_path("conditional.onnx")
