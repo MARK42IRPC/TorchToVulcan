@@ -567,6 +567,7 @@ def validate_executable_package(directory: str | Path) -> dict[str, Any]:
     shaders = _unique_records(manifest, "shaders")
     pipelines = _unique_records(manifest, "pipelines")
     programs = _unique_records(manifest, "programs")
+    _optional_unique_records(manifest, "profiles")
     states = _optional_unique_records(manifest, "states")
     loops = _optional_unique_records(manifest, "loops")
 
