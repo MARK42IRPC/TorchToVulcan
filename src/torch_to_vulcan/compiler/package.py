@@ -40,7 +40,12 @@ class ExecutablePackageError(ValueError):
 
 
 class ExecutablePackageBuilder:
-    """Collect one static linear program and materialize it atomically."""
+    """Collect static programs and materialize them atomically.
+
+    ``main`` and ``self.steps`` remain the compatibility surface for TTV 0.1
+    callers.  Additional named programs, profiles, state tensors, and host
+    loops are opt-in manifest records.
+    """
 
     def __init__(
         self,
@@ -61,8 +66,14 @@ class ExecutablePackageBuilder:
         self.has_constants = False
         self.shaders: dict[str, tuple[bytes, str, str]] = {}
         self.pipelines: dict[str, dict[str, object]] = {}
+        self.programs: dict[str, dict[str, object]] = {
+            "main": {"id": "main", "kind": "linear", "steps": []}
+        }
         self.steps: list[dict[str, object]] = []
         self.certificates: dict[str, dict[str, object]] = {}
+        self.profiles: dict[str, dict[str, object]] = {}
+        self.states: dict[str, dict[str, object]] = {}
+        self.loops: dict[str, dict[str, object]] = {}
 
     def add_tensor(
         self,
@@ -80,6 +91,155 @@ class ExecutablePackageBuilder:
             shape,
             {"kind": storage},
         )
+
+    def add_profile(
+        self,
+        profile_id: str,
+        dimensions: Mapping[str, int] | None = None,
+    ) -> None:
+        """Record the concrete symbolic-dimension bindings used at compile time."""
+        if not profile_id or profile_id in self.profiles:
+            raise ExecutablePackageError(f"duplicate or empty profile ID {profile_id!r}")
+        normalized: dict[str, int] = {}
+        for symbol, value in dict(dimensions or {}).items():
+            if not isinstance(symbol, str) or not symbol:
+                raise ExecutablePackageError("profile dimension names must not be empty")
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExecutablePackageError(
+                    f"profile dimension {symbol!r} must be a non-negative integer"
+                )
+            normalized[symbol] = value
+        self.profiles[profile_id] = {
+            "id": profile_id,
+            "dimensions": normalized,
+        }
+
+    def add_program(
+        self,
+        program_id: str,
+        *,
+        kind: str = "subprogram",
+        inputs: Sequence[str] = (),
+        outputs: Sequence[str] = (),
+    ) -> None:
+        """Add a named callable program that shares package tensor storage."""
+        if not program_id or program_id in self.programs:
+            raise ExecutablePackageError(f"duplicate or empty program ID {program_id!r}")
+        if kind not in {"linear", "subprogram"}:
+            raise ExecutablePackageError(f"unsupported program kind {kind}")
+        input_ids = list(inputs)
+        output_ids = list(outputs)
+        if len(set(input_ids)) != len(input_ids) or len(set(output_ids)) != len(output_ids):
+            raise ExecutablePackageError(f"program {program_id} bindings must be unique")
+        self.programs[program_id] = {
+            "id": program_id,
+            "kind": kind,
+            "steps": [],
+            "bindings": {"inputs": input_ids, "outputs": output_ids},
+        }
+
+    def add_subprogram(
+        self,
+        program_id: str,
+        *,
+        inputs: Sequence[str] = (),
+        outputs: Sequence[str] = (),
+    ) -> None:
+        self.add_program(program_id, inputs=inputs, outputs=outputs)
+
+    def add_state_tensor(
+        self,
+        tensor_id: str,
+        data_type: str,
+        shape: Sequence[int],
+        *,
+        state_id: str | None = None,
+        update_program: str | None = None,
+        layout: str = "contiguous",
+        update_region: Mapping[str, object] | None = None,
+    ) -> None:
+        """Add a zero-initialized tensor that survives repeated program calls."""
+        resolved_state_id = state_id or tensor_id
+        if not resolved_state_id or resolved_state_id in self.states:
+            raise ExecutablePackageError(
+                f"duplicate or empty state ID {resolved_state_id!r}"
+            )
+        if not layout:
+            raise ExecutablePackageError("state tensor layout must not be empty")
+        region = dict(update_region or {"kind": "whole_tensor"})
+        if region.get("kind") not in {"whole_tensor", "prefix_append"}:
+            raise ExecutablePackageError(
+                f"unsupported state update region {region.get('kind')!r}"
+            )
+        self._add_tensor_record(
+            tensor_id,
+            data_type,
+            shape,
+            {
+                "kind": "state",
+                "state_id": resolved_state_id,
+                "initialization": "zero",
+            },
+        )
+        update: dict[str, object] = {
+            "mode": "in_place",
+            "boundary": "invocation",
+            "region": region,
+        }
+        if update_program is not None:
+            update["program"] = update_program
+        state: dict[str, object] = {
+            "id": resolved_state_id,
+            "tensor_id": tensor_id,
+            "lifetime": "session",
+            "reset": "zero",
+            "layout": layout,
+            "update": update,
+        }
+        self.states[resolved_state_id] = state
+
+    def add_host_loop(
+        self,
+        loop_id: str,
+        program_id: str,
+        *,
+        max_iterations: int,
+        stop_tensor: str,
+        comparison: str = "nonzero",
+    ) -> None:
+        """Describe a host-synchronized loop around a callable program."""
+        if not loop_id or loop_id in self.loops:
+            raise ExecutablePackageError(f"duplicate or empty loop ID {loop_id!r}")
+        if max_iterations <= 0:
+            raise ExecutablePackageError("host loop max_iterations must be positive")
+        if comparison != "nonzero":
+            raise ExecutablePackageError(
+                f"unsupported host loop comparison {comparison!r}"
+            )
+        program = self.programs.get(program_id)
+        if program is None:
+            raise ExecutablePackageError(f"unknown loop program {program_id}")
+        if program_id == "main" or program["kind"] != "subprogram":
+            raise ExecutablePackageError("host loop program must be a subprogram")
+        if stop_tensor not in self.tensors:
+            raise ExecutablePackageError(f"unknown loop termination tensor {stop_tensor}")
+        bindings = program["bindings"]
+        if stop_tensor not in bindings["outputs"]:  # type: ignore[index]
+            raise ExecutablePackageError(
+                f"loop termination tensor {stop_tensor} must be a program output"
+            )
+        self.loops[loop_id] = {
+            "id": loop_id,
+            "kind": "host",
+            "program": program_id,
+            "max_iterations": max_iterations,
+            "termination": {
+                "kind": "host_tensor",
+                "tensor_id": stop_tensor,
+                "comparison": comparison,
+            },
+            "synchronization": "after_each_iteration",
+        }
 
     def add_constant(
         self,
@@ -160,8 +320,16 @@ class ExecutablePackageBuilder:
         resource_tensors: Sequence[str],
         *,
         certificate: Mapping[str, object] | None = None,
+        program_id: str = "main",
     ) -> None:
-        if not node_id or any(item["node_id"] == node_id for item in self.steps):
+        if program_id not in self.programs:
+            raise ExecutablePackageError(f"unknown program {program_id}")
+        program_steps = self.programs[program_id]["steps"]
+        if not node_id or any(
+            item["node_id"] == node_id
+            for program in self.programs.values()
+            for item in program["steps"]  # type: ignore[index]
+        ):
             raise ExecutablePackageError(f"duplicate or empty dispatch node ID {node_id!r}")
         if len(resource_tensors) != len(step.bindings):
             raise ExecutablePackageError(
@@ -226,7 +394,9 @@ class ExecutablePackageBuilder:
             certificate_payload["id"] = certificate_id
             self.certificates.setdefault(certificate_id, certificate_payload)
             dispatch["certificate_id"] = certificate_id
-        self.steps.append(dispatch)
+        program_steps.append(dispatch)  # type: ignore[union-attr]
+        if program_id == "main":
+            self.steps.append(dispatch)
 
     def write(
         self,
@@ -320,13 +490,7 @@ class ExecutablePackageBuilder:
             "blobs": blobs,
             "shaders": shader_records,
             "pipelines": list(self.pipelines.values()),
-            "programs": [
-                {
-                    "id": "main",
-                    "kind": "linear",
-                    "steps": deepcopy(self.steps),
-                }
-            ],
+            "programs": [deepcopy(program) for program in self.programs.values()],
             "certificate_store": {
                 "file": "certificates/kernels.json",
                 "sha256": _sha256(certificate_bytes),
@@ -335,6 +499,12 @@ class ExecutablePackageBuilder:
         }
         if metadata:
             manifest["metadata"] = dict(metadata)
+        if self.profiles:
+            manifest["profiles"] = deepcopy(list(self.profiles.values()))
+        if self.states:
+            manifest["states"] = deepcopy(list(self.states.values()))
+        if self.loops:
+            manifest["loops"] = deepcopy(list(self.loops.values()))
         (root / "manifest.json").write_bytes(_pretty_json(manifest))
         return manifest
 
@@ -397,10 +567,72 @@ def validate_executable_package(directory: str | Path) -> dict[str, Any]:
     shaders = _unique_records(manifest, "shaders")
     pipelines = _unique_records(manifest, "pipelines")
     programs = _unique_records(manifest, "programs")
+    states = _optional_unique_records(manifest, "states")
+    loops = _optional_unique_records(manifest, "loops")
 
     for tensor_id in (*manifest["bindings"]["inputs"], *manifest["bindings"]["outputs"]):
         _require_reference(tensors, tensor_id, "bound tensor")
     _require_reference(programs, manifest["entry_program"], "entry program")
+
+    for program_id, program in programs.items():
+        bindings = program.get("bindings")
+        if program["kind"] == "subprogram" and bindings is None:
+            raise ExecutablePackageError(f"subprogram {program_id} is missing bindings")
+        if bindings is not None:
+            for tensor_id in (*bindings["inputs"], *bindings["outputs"]):
+                _require_reference(tensors, tensor_id, f"program {program_id} tensor")
+    for state_id, state in states.items():
+        tensor_id = state["tensor_id"]
+        tensor = _require_reference(tensors, tensor_id, f"state {state_id} tensor")
+        storage = tensor["storage"]
+        if storage["kind"] != "state" or storage["state_id"] != state_id:
+            raise ExecutablePackageError(
+                f"state {state_id} does not match tensor {tensor_id} storage"
+            )
+        update_program = state["update"].get("program")
+        if update_program is not None:
+            program = _require_reference(
+                programs, update_program, f"state {state_id} update program"
+            )
+            if program["kind"] != "subprogram":
+                raise ExecutablePackageError(
+                    f"state {state_id} update program must be a subprogram"
+                )
+            bindings = program["bindings"]
+            if tensor_id not in bindings["inputs"] or tensor_id not in bindings["outputs"]:
+                raise ExecutablePackageError(
+                    f"state {state_id} update program must bind its tensor as input and output"
+                )
+        region = state["update"]["region"]
+        if region["kind"] == "prefix_append":
+            axis = region["axis"]
+            if axis >= len(tensor["shape"]):
+                raise ExecutablePackageError(
+                    f"state {state_id} update axis {axis} exceeds tensor rank"
+                )
+            _require_reference(
+                tensors,
+                region["position_tensor"],
+                f"state {state_id} position tensor",
+            )
+
+    for loop_id, loop in loops.items():
+        program = _require_reference(programs, loop["program"], f"loop {loop_id} program")
+        if program["kind"] != "subprogram":
+            raise ExecutablePackageError(
+                f"loop {loop_id} program must be a subprogram"
+            )
+        _require_reference(
+            tensors,
+            loop["termination"]["tensor_id"],
+            f"loop {loop_id} termination tensor",
+        )
+        if loop["termination"]["tensor_id"] not in program.get("bindings", {}).get(
+            "outputs", []
+        ):
+            raise ExecutablePackageError(
+                f"loop {loop_id} termination tensor must be a program output"
+            )
 
     blob_sizes: dict[str, int] = {}
     for blob_id, blob in blobs.items():
@@ -420,6 +652,8 @@ def validate_executable_package(directory: str | Path) -> dict[str, Any]:
                 raise ExecutablePackageError(f"constant tensor {tensor_id} exceeds its blob")
         elif storage["kind"] == "view":
             _require_reference(tensors, storage["source_tensor"], f"view tensor {tensor_id}")
+        elif storage["kind"] == "state":
+            _require_reference(states, storage["state_id"], f"state tensor {tensor_id}")
 
     for shader_id, shader in shaders.items():
         payload = _verified_artifact(root, shader["file"], shader["sha256"])
@@ -454,6 +688,19 @@ def validate_executable_package(directory: str | Path) -> dict[str, Any]:
 
     seen_nodes: set[str] = set()
     for program_id, program in programs.items():
+        bindings = program.get("bindings")
+        if bindings is not None:
+            resource_tensor_ids = {
+                resource["tensor_id"]
+                for step in program["steps"]
+                for resource in step["resources"]
+            }
+            missing_outputs = set(bindings["outputs"]) - resource_tensor_ids
+            if missing_outputs:
+                raise ExecutablePackageError(
+                    f"program {program_id} outputs are not bound by a dispatch: "
+                    + ", ".join(sorted(missing_outputs))
+                )
         for step in program["steps"]:
             node_id = step["node_id"]
             if node_id in seen_nodes:
@@ -477,7 +724,18 @@ def validate_executable_package(directory: str | Path) -> dict[str, Any]:
                     tensors,
                     resource["tensor_id"],
                     f"dispatch {node_id} tensor",
-                )
+                    )
+                bindings = program.get("bindings")
+                if (
+                    bindings is not None
+                    and tensor["storage"]["kind"] in {"external", "state"}
+                    and resource["tensor_id"]
+                    not in (*bindings["inputs"], *bindings["outputs"])
+                ):
+                    raise ExecutablePackageError(
+                        f"dispatch {node_id} exposes external/state tensor "
+                        f"{resource['tensor_id']} outside program {program_id} bindings"
+                    )
                 descriptor = next(
                     item
                     for item in pipeline["descriptor_layout"]
@@ -525,6 +783,14 @@ def _unique_records(value: Mapping[str, object], name: str) -> dict[str, Any]:
     if not isinstance(items, list):
         raise ExecutablePackageError(f"manifest {name} must be an array")
     return _unique_values(items, name)
+
+
+def _optional_unique_records(
+    value: Mapping[str, object], name: str
+) -> dict[str, Any]:
+    if name not in value:
+        return {}
+    return _unique_records(value, name)
 
 
 def _unique_values(items: Sequence[object], name: str) -> dict[str, Any]:

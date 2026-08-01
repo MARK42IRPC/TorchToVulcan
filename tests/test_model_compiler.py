@@ -127,6 +127,7 @@ class StaticModelCompilerTests(unittest.TestCase):
         manifest = validate_executable_package(destination)
         self.assertEqual(report.shape_profile.name, "batch2")
         self.assertEqual(manifest["tensors"]["x"]["shape"], [2, 3])
+        self.assertEqual(manifest["profiles"], [{"id": "batch2", "dimensions": {"batch": 2}}])
         self.assertEqual(manifest["metadata"]["shape_profile"], '{"dimensions": {"batch": 2}, "name": "batch2"}')
 
     def test_rejects_a_truly_unregistered_kernel_without_writing_a_package(self) -> None:

@@ -92,8 +92,7 @@ initializer；initializer 只用于编译期选择，不作为 shader descriptor
 
 当前状态：已完成一个静态 block 的包执行验收，包含两次 batch MatMul、bias
 broadcast、LayerNormalization 和 Softmax；Vulkan 输出同时与 NumPy 和
-ONNX Runtime 参考比较。下一步是把端到端样例纳入长期 Transformer fixture，
-并继续处理 subprogram/state 契约。
+ONNX Runtime 参考比较。静态 block 仍是 `main/linear` 兼容路径。
 
 ### P4：TTV subprogram、host loop 与 KV-cache
 
@@ -107,6 +106,13 @@ host-driven loop 和小型 token/stop flag 回读。先由 host 驱动 autoregre
 - KV-cache 的 shape、layout、生命周期和更新边界写入包契约；
 - loop 的退出条件、最大迭代次数和 host/device 同步点可审计；
 - 旧的 `linear` TTV 0.1 包仍能被 runtime 读取。
+
+当前状态：已完成 P4 的第一切片。Manifest/schema 支持命名 subprogram、显式
+profile、session state 和 host-driven loop；runtime 可在同一 Vulkan
+device/context 上重复调用 subprogram、保留 state buffer、reset state，并在
+每轮 fence 后读取 host termination tensor。旧 `main/linear` 包的回归测试和
+一个 device-local stateful Add 测试均通过。`prefix_append` 已进入契约校验，
+但真正的 KV-cache token append、位置边界和 attention cache layout 仍未完成。
 
 ### P5：量化与模型集成
 
@@ -140,7 +146,7 @@ device verified。只有最后一级才能称为 Vulkan 可执行。每个 opera
 - 任意运行时动态 shape 或未经 `ShapeProfile` 特化的符号维度；
 - `If`、`Loop`、`Scan` 和 sequence 类型的包内执行；
 - FP16、BF16、INT8/INT4 原生计算；
-- KV-cache、host-driven loop 和多 subprogram package；
+- 完整 KV-cache token append、采样和 Aemeath 专用 host orchestration；
 - Conv、pooling、TopK、Gather、音频变换以及 Aemeath 专用 custom op 的
   Vulkan device verification；
 - 以性能为理由的 fusion、arena 复用、异步流水和 autotuning。

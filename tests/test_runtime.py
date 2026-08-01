@@ -8,8 +8,10 @@ import numpy as np
 from onnx import TensorProto, helper
 
 from torch_to_vulcan.compiler import compile_static_model
+from torch_to_vulcan.compiler import ExecutablePackageBuilder
 from torch_to_vulcan.compiler.vulkan.runtime import VulkanPackageRuntime
 from torch_to_vulcan.compiler.vulkan.verify import detect_toolchain
+from torch_to_vulcan.compiler.vulkan.kernels import KernelContext, KernelTensor, default_kernel_registry
 
 
 def make_chain_model():
@@ -215,6 +217,52 @@ def make_transformer_block_model():
     return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
 
 
+def make_stateful_add_package(destination: Path) -> None:
+    plan = default_kernel_registry().select(
+        KernelContext(
+            "",
+            "Add",
+            18,
+            {},
+            (
+                KernelTensor("cache", "FLOAT", ("1", "4")),
+                KernelTensor("x", "FLOAT", ("1", "4")),
+            ),
+            (KernelTensor("cache", "FLOAT", ("1", "4")),),
+        )
+    )
+    from torch_to_vulcan.compiler.vulkan.verify import VerificationRunner
+
+    spirv, _stage, message = VerificationRunner()._compile_shader(plan.steps[0].shader.source)
+    if spirv is None:
+        raise RuntimeError(message)
+    builder = ExecutablePackageBuilder("stateful-add")
+    builder.add_tensor("x", "FLOAT", (1, 4), storage="external")
+    builder.add_state_tensor(
+        "cache",
+        "FLOAT",
+        (1, 4),
+        state_id="kv_cache",
+        update_program="decode",
+    )
+    builder.add_subprogram("decode", inputs=("x", "cache"), outputs=("cache",))
+    builder.add_host_loop(
+        "decode_loop",
+        "decode",
+        max_iterations=2,
+        stop_tensor="cache",
+    )
+    builder.add_dispatch(
+        "decode_add",
+        plan.kernel_id,
+        plan.steps[0],
+        spirv,
+        ("cache", "x", "cache"),
+        program_id="decode",
+    )
+    builder.write(destination)
+
+
 @unittest.skipUnless(
     detect_toolchain().vulkaninfo
     and detect_toolchain().glslang_validator
@@ -402,6 +450,24 @@ class VulkanPackageRuntimeTests(unittest.TestCase):
         )
         ort_output = session.run(["y"], {"x": inputs})[0]
         np.testing.assert_allclose(result.outputs["y"], ort_output, rtol=2e-4, atol=2e-5)
+
+    def test_reuses_a_stateful_subprogram_and_resets_state(self) -> None:
+        destination = Path(self.temporary_directory.name) / "stateful.ttv"
+        make_stateful_add_package(destination)
+        inputs = {"x": np.asarray([[1.0, -2.0, 0.5, 3.0]], dtype=np.float32)}
+
+        with VulkanPackageRuntime(destination, device_local=True) as runtime:
+            first = runtime.run_program("decode", inputs)
+            runtime.run_program("decode", inputs, read_outputs=False)
+            second = runtime.run_program("decode", inputs)
+            runtime.reset_state("kv_cache")
+            reset = runtime.run_program("decode", inputs)
+            loop = runtime.run_loop("decode_loop", inputs)
+
+        np.testing.assert_allclose(first.outputs["cache"], inputs["x"])
+        np.testing.assert_allclose(second.outputs["cache"], inputs["x"] * 3.0)
+        np.testing.assert_allclose(reset.outputs["cache"], inputs["x"])
+        np.testing.assert_allclose(loop.outputs["cache"], inputs["x"] * 2.0)
 
 
 if __name__ == "__main__":

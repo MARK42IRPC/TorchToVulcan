@@ -64,6 +64,18 @@
       "type": "array",
       "items": { "$ref": "#/$defs/program" }
     },
+    "profiles": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/profile" }
+    },
+    "states": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/state" }
+    },
+    "loops": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/loop" }
+    },
     "certificate_store": {
       "type": "object",
       "required": ["file", "sha256", "count"],
@@ -141,6 +153,16 @@
                   "type": "array",
                   "items": { "type": "integer", "minimum": 0 }
                 }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "state_id", "initialization"],
+              "properties": {
+                "kind": { "const": "state" },
+                "state_id": { "$ref": "#/$defs/identifier" },
+                "initialization": { "const": "zero" }
               },
               "additionalProperties": false
             }
@@ -251,11 +273,106 @@
       "required": ["id", "kind", "steps"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
-        "kind": { "const": "linear" },
+        "kind": { "enum": ["linear", "subprogram"] },
         "steps": {
           "type": "array",
           "items": { "$ref": "#/$defs/dispatchStep" }
+        },
+        "bindings": {
+          "type": "object",
+          "required": ["inputs", "outputs"],
+          "properties": {
+            "inputs": { "$ref": "#/$defs/identifierList" },
+            "outputs": { "$ref": "#/$defs/identifierList" }
+          },
+          "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "required": ["id", "dimensions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "required": ["id", "tensor_id", "lifetime", "reset", "layout", "update"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "tensor_id": { "$ref": "#/$defs/identifier" },
+        "lifetime": { "const": "session" },
+        "reset": { "const": "zero" },
+        "layout": { "type": "string", "minLength": 1 },
+        "update": {
+          "type": "object",
+          "required": ["mode", "boundary", "region"],
+          "properties": {
+            "mode": { "const": "in_place" },
+            "boundary": { "const": "invocation" },
+            "program": { "$ref": "#/$defs/identifier" },
+            "region": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["kind"],
+                  "properties": { "kind": { "const": "whole_tensor" } },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": ["kind", "axis", "position_tensor"],
+                  "properties": {
+                    "kind": { "const": "prefix_append" },
+                    "axis": { "type": "integer", "minimum": 0 },
+                    "position_tensor": { "$ref": "#/$defs/identifier" }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "loop": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "program",
+        "max_iterations",
+        "termination",
+        "synchronization"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "host" },
+        "program": { "$ref": "#/$defs/identifier" },
+        "max_iterations": { "type": "integer", "minimum": 1 },
+        "termination": {
+          "type": "object",
+          "required": ["kind", "tensor_id", "comparison"],
+          "properties": {
+            "kind": { "const": "host_tensor" },
+            "tensor_id": { "$ref": "#/$defs/identifier" },
+            "comparison": { "const": "nonzero" }
+          },
+          "additionalProperties": false
+        },
+        "synchronization": { "const": "after_each_iteration" }
       },
       "additionalProperties": false
     }

@@ -61,10 +61,28 @@ arrays.
 
 ## Programs and control flow
 
-Version 0.1 implements a `linear` program containing ordered dispatch steps.
-The manifest reserves named programs so later versions can reference loop and
-branch bodies without unrolling them. Autoregressive `Loop` bodies will therefore
-be stored as subprograms that reuse pipelines and carried tensor slots.
+The compatibility entry is still a `linear` program containing ordered
+dispatch steps. The same 0.1 manifest can now optionally contain named
+`subprogram` records. A subprogram declares its tensor inputs and outputs and
+reuses the package's global tensor, pipeline, and shader tables. It is invoked
+by the runtime without rebuilding the Vulkan device or pipelines.
+
+The optional `profiles` list records the concrete symbolic-dimension bindings
+used to compile a package. A profile is an audit record and a selection key; it
+does not turn a static allocation into a runtime-dynamic tensor.
+
+The optional `states` list declares session-lifetime tensors. A state has a
+declared layout, zero reset policy, and an invocation update boundary. State
+buffers stay resident across `run_program` calls and may be bound as both an
+input and output of a subprogram. `prefix_append` is reserved for KV-cache
+metadata, but the current runtime only guarantees persistent whole-tensor
+storage; token indexing and bounded append kernels remain a later step.
+
+The optional `loops` list describes a host-driven loop: a subprogram is invoked,
+the declared output termination tensor is read after the fence, and the host
+decides whether to invoke the next iteration. Every loop has a positive maximum
+iteration count and an explicit `after_each_iteration` synchronization point.
+There is no hidden device-side control flow in this path.
 
 The package stores SPIR-V, not live Vulkan objects. Descriptor sets, command
 buffers, device memory, and pipelines are created by the runtime. Driver-specific
@@ -95,7 +113,9 @@ Package validation rejects:
 - duplicate artifact IDs;
 - dangling shader, pipeline, tensor, program, or certificate references;
 - constant tensor ranges outside their blob or violating alignment;
-- dispatch resources that do not match the pipeline descriptor layout.
+- dispatch resources that do not match the pipeline descriptor layout;
+- subprogram, state, profile, or host-loop records with dangling references;
+- state update regions whose axis or position tensor is not representable.
 
 Version 0.1 implementation proceeds in slices:
 
@@ -103,7 +123,7 @@ Version 0.1 implementation proceeds in slices:
 2. evaluate and persist constant/shape subgraphs;
 3. add tensor arena allocation and storage aliases;
 4. load and execute a complete linear package;
-5. add named loop/branch subprograms and shape profiles.
+5. add named subprograms, profiles, persistent state, and host-driven loops.
 
 ## Current implementation
 
@@ -142,9 +162,10 @@ attributes, missing tensor metadata, unsupported data types, and unregistered
 kernels produce node-indexed diagnostics before the destination directory is
 created. The Python Vulkan package runtime now loads and executes a complete
 `linear` program. It keeps one device, one allocation per materialized tensor,
-cached pipelines, descriptor sets, and a recorded command buffer alive across
-calls. The runtime accepts an `.npz` whose keys are the manifest input tensor
-IDs:
+cached pipelines, descriptor sets, and recorded command variants alive across
+calls. It also exposes `run_program`, `run_loop`, and `reset_state` for the
+optional records above. The runtime accepts an `.npz` whose keys are the
+selected program's external input tensor IDs:
 
 ```powershell
 .venv\Scripts\ttv run artifacts\model.ttv inputs.npz --output outputs.npz
@@ -171,6 +192,11 @@ does not establish whole-model CPU speedup.
 `--cpu-onnx` runs the same input through ONNX Runtime CPU and reports
 `CPU latency / GPU latency`; a value above `1.0x` means the measured GPU path is
 faster for that exact input and timing scope.
+
+The current stateful test covers repeated Vulkan calls, device-local state
+residency, and reset semantics on a whole tensor. Full autoregressive KV-cache
+append, token sampling, and model-specific host orchestration are still
+integration work.
 
 Compile a supported static ONNX model and validate the resulting directory:
 

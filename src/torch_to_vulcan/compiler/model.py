@@ -154,6 +154,8 @@ def compile_static_model(
     compile_shader = shader_compiler or _compile_shader
     package_name = model_name or graph.name or "onnx-model"
     builder = ExecutablePackageBuilder(package_name)
+    if shape_profile is not None:
+        builder.add_profile(shape_profile.name, shape_profile.dimensions)
     initializer_names = set(graph.constants)
     graph_outputs = set(graph.outputs)
 

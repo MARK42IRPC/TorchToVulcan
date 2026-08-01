@@ -6,7 +6,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import numpy as np
 
@@ -73,16 +73,31 @@ class _PipelineResources:
     push_constant_size: int
 
 
+@dataclass(slots=True)
+class _ProgramResources:
+    steps: tuple[dict[str, Any], ...]
+    input_ids: tuple[str, ...]
+    output_ids: tuple[str, ...]
+    descriptor_sets: list[Any]
+    command_variants: dict[tuple[bool, bool], Any]
+
+
 class VulkanPackageRuntime(VulkanExecutor):
-    """Load and execute one validated static linear TTV package.
+    """Load and execute a validated TTV package on one persistent Vulkan device.
 
     Device buffers, descriptor layouts, pipelines, and the command buffer are
-    retained for the lifetime of this object. Calling :meth:`run` therefore
-    only uploads external inputs, submits the already-recorded graph, and reads
-    declared outputs.
+    retained for the lifetime of this object. ``run`` executes the compatibility
+    entry program; ``run_program`` can invoke a named subprogram while keeping
+    session state tensors resident on the same device.
     """
 
-    def __init__(self, directory: str | Path, *, device_local: bool = False) -> None:
+    def __init__(
+        self,
+        directory: str | Path,
+        *,
+        device_local: bool = False,
+        profile_id: str | None = None,
+    ) -> None:
         self.package_directory = Path(directory).resolve()
         self.device_local_requested = device_local
         self.device_local_enabled = False
@@ -100,6 +115,11 @@ class VulkanPackageRuntime(VulkanExecutor):
         self._pipeline_resources: dict[str, _PipelineResources] = {}
         self._tensor_allocations: dict[str, _TensorAllocation] = {}
         self._tensor_templates: dict[str, np.ndarray[Any, Any]] = {}
+        self._program_records = {
+            item["id"]: item for item in self.manifest["programs"]
+        }
+        self._program_resources: dict[str, _ProgramResources] = {}
+        self.profile_id = self._select_profile(profile_id)
         self._prepared = False
         self._descriptor_pool: Any = None
         self._command_pool: Any = None
@@ -107,10 +127,19 @@ class VulkanPackageRuntime(VulkanExecutor):
         self._command_variants: dict[tuple[bool, bool], Any] = {}
         self._active_recording_command_buffer: Any = None
         self._fence: Any = None
-        self._descriptor_sets: list[Any] = []
         self._program_steps = self._load_program_steps()
         self._load_shader_bytes()
         super().__init__()
+
+    def _select_profile(self, profile_id: str | None) -> str | None:
+        profiles = {item["id"]: item for item in self.manifest.get("profiles", [])}
+        if profile_id is not None and profile_id not in profiles:
+            raise ExecutablePackageError(f"package profile not found: {profile_id}")
+        if profile_id is not None:
+            return profile_id
+        if len(profiles) == 1:
+            return next(iter(profiles))
+        return None
 
     @property
     def memory_mode(self) -> str:
@@ -134,6 +163,7 @@ class VulkanPackageRuntime(VulkanExecutor):
             if self._descriptor_pool is not None:
                 self.vk.vkDestroyDescriptorPool(self.device, self._descriptor_pool, None)
                 self._descriptor_pool = None
+            self._program_resources.clear()
             for resources in self._pipeline_resources.values():
                 self.vk.vkDestroyPipeline(self.device, resources.pipeline, None)
                 self.vk.vkDestroyPipelineLayout(self.device, resources.pipeline_layout, None)
@@ -167,24 +197,45 @@ class VulkanPackageRuntime(VulkanExecutor):
         transfer_inputs: bool = True,
         read_outputs: bool = True,
     ) -> PackageExecutionResult:
-        """Execute once, optionally measuring resident device buffers only."""
+        """Execute the package entry program."""
+        return self.run_program(
+            self.manifest["entry_program"],
+            inputs,
+            transfer_inputs=transfer_inputs,
+            read_outputs=read_outputs,
+        )
+
+    def run_program(
+        self,
+        program_id: str,
+        inputs: Mapping[str, np.ndarray[Any, Any]] | None,
+        *,
+        transfer_inputs: bool = True,
+        read_outputs: bool = True,
+    ) -> PackageExecutionResult:
+        """Invoke a named linear/subprogram using persistent package resources."""
+        if program_id not in self._program_resources and program_id not in self._program_records:
+            raise VulkanExecutionError(f"未知 package program {program_id}")
+        if program_id not in self._program_records:
+            raise VulkanExecutionError(f"未知 package program {program_id}")
         started = time.perf_counter()
         if inputs is None:
             if not self._prepared:
                 raise VulkanExecutionError("首次执行必须提供 package 输入")
         else:
-            self._prepare(inputs)
+            self._prepare(inputs, program_id)
         upload_started = time.perf_counter()
         if transfer_inputs:
             if inputs is None:
                 raise VulkanExecutionError("transfer_inputs=True 时必须提供输入")
-            self._upload_inputs(inputs)
+            self._upload_inputs(program_id, inputs)
         upload_ms = (time.perf_counter() - upload_started) * 1000.0
         dispatch_started = time.perf_counter()
         try:
-            command_buffer = self._command_variants.get(
+            resources = self._program_resources[program_id]
+            command_buffer = resources.command_variants.get(
                 (transfer_inputs, read_outputs),
-                self._command_buffer,
+                resources.command_variants.get((True, True)),
             )
             if command_buffer is not None:
                 self._submit_command_buffer(command_buffer)
@@ -193,7 +244,7 @@ class VulkanPackageRuntime(VulkanExecutor):
                 readback_started = time.perf_counter()
                 outputs = {
                     tensor_id: self._read_tensor(tensor_id)
-                    for tensor_id in self.manifest["bindings"]["outputs"]
+                    for tensor_id in resources.output_ids
                 }
                 readback_ms = (time.perf_counter() - readback_started) * 1000.0
             else:
@@ -213,6 +264,70 @@ class VulkanPackageRuntime(VulkanExecutor):
             not transfer_inputs and not read_outputs,
         )
 
+    def run_loop(
+        self,
+        loop_id: str,
+        inputs: Mapping[str, np.ndarray[Any, Any]]
+        | Callable[[int], Mapping[str, np.ndarray[Any, Any]]],
+        *,
+        read_outputs: bool = True,
+    ) -> PackageExecutionResult:
+        """Run a declared host loop, synchronizing and checking its stop tensor."""
+        loops = {item["id"]: item for item in self.manifest.get("loops", [])}
+        if loop_id not in loops:
+            raise VulkanExecutionError(f"未知 package host loop {loop_id}")
+        loop = loops[loop_id]
+        last: PackageExecutionResult | None = None
+        for iteration in range(int(loop["max_iterations"])):
+            current = inputs(iteration) if callable(inputs) else inputs
+            last = self.run_program(loop["program"], current, read_outputs=True)
+            stop_tensor = loop["termination"]["tensor_id"]
+            if np.any(last.outputs[stop_tensor]):
+                break
+        if last is None:
+            raise VulkanExecutionError(f"host loop {loop_id} has no iterations")
+        if not read_outputs:
+            return PackageExecutionResult(
+                {},
+                last.device_name,
+                last.elapsed_ms,
+                last.upload_ms,
+                last.dispatch_ms,
+                last.readback_ms,
+                last.resident,
+            )
+        return last
+
+    def reset_state(self, state_id: str | None = None) -> None:
+        """Reset one or all session state tensors to their declared zero value."""
+        states = {item["id"]: item for item in self.manifest.get("states", [])}
+        selected = [state_id] if state_id is not None else list(states)
+        for current_id in selected:
+            if current_id not in states:
+                raise VulkanExecutionError(f"未知 package state {current_id}")
+            if not self._prepared:
+                raise VulkanExecutionError("reset_state requires a prepared runtime")
+            tensor_id = states[current_id]["tensor_id"]
+            template = self._tensor_templates[tensor_id]
+            zero = np.zeros_like(template)
+            allocation = self._tensor_allocations[tensor_id]
+            if allocation.host_allocation is None:
+                mapped = self._map_allocation(allocation.allocation)
+                if zero.nbytes:
+                    mapped[allocation.byte_offset : allocation.byte_offset + zero.nbytes] = zero.tobytes()
+                    self._flush_memory(allocation.allocation, allocation.byte_offset, zero.nbytes)
+            else:
+                mapped = self._map_allocation(allocation.host_allocation)
+                if zero.nbytes:
+                    mapped[: zero.nbytes] = zero.tobytes()
+                    self._flush_memory(allocation.host_allocation, 0, zero.nbytes)
+                if self.device_local_enabled and zero.nbytes:
+                    self._copy_buffer(
+                        allocation.host_allocation,
+                        allocation.allocation,
+                        zero.nbytes,
+                    )
+
     def benchmark(
         self,
         inputs: Mapping[str, np.ndarray[Any, Any]],
@@ -224,13 +339,14 @@ class VulkanPackageRuntime(VulkanExecutor):
         if warmup < 0 or iterations <= 0:
             raise ValueError("warmup must be non-negative and iterations must be positive")
         if resident:
-            self._prepare(inputs)
-            self._upload_inputs(inputs)
+            program_id = self.manifest["entry_program"]
+            self._prepare(inputs, program_id)
+            self._upload_inputs(program_id, inputs)
             # Inputs are written to host staging above; perform one transfer
             # before switching to the resident command variant.
             if self.device_local_enabled:
                 self._submit_command_buffer(
-                    self._command_variants[(True, False)]
+                    self._program_resources[program_id].command_variants[(True, False)]
                 )
             for _ in range(warmup):
                 self.run(None, transfer_inputs=False, read_outputs=False)
@@ -277,25 +393,42 @@ class VulkanPackageRuntime(VulkanExecutor):
             raise VulkanExecutionError(f"等待 Vulkan 推理完成失败: {result}")
 
     def _load_program_steps(self) -> tuple[dict[str, Any], ...]:
-        programs = {
-            item["id"]: item for item in self.manifest["programs"]
-        }
-        program = programs[self.manifest["entry_program"]]
-        if program["kind"] != "linear":
+        program = self._program_records[self.manifest["entry_program"]]
+        if program["kind"] not in {"linear", "subprogram"}:
             raise ExecutablePackageError(
-                f"TTV 0.1 runtime only supports linear programs, got {program['kind']}"
+                f"unsupported TTV program kind {program['kind']}"
             )
         return tuple(program["steps"])
+
+    def _program_bindings(self, program_id: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        program = self._program_records[program_id]
+        bindings = program.get("bindings")
+        if bindings is None:
+            bindings = self.manifest["bindings"]
+        return tuple(bindings["inputs"]), tuple(bindings["outputs"])
+
+    def _program_external_inputs(self, program_id: str) -> tuple[str, ...]:
+        input_ids, _outputs = self._program_bindings(program_id)
+        return tuple(
+            tensor_id
+            for tensor_id in input_ids
+            if self.manifest["tensors"][tensor_id]["storage"]["kind"] != "state"
+        )
 
     def _load_shader_bytes(self) -> None:
         for shader_id, shader in self._shader_records.items():
             self._shaders[shader_id] = (self.package_directory / shader["file"]).read_bytes()
 
-    def _prepare(self, inputs: Mapping[str, np.ndarray[Any, Any]]) -> None:
+    def _prepare(
+        self,
+        inputs: Mapping[str, np.ndarray[Any, Any]],
+        program_id: str,
+    ) -> None:
         if self._prepared:
-            self._validate_inputs(inputs)
+            self._validate_inputs(program_id, inputs)
             return
-        expected_inputs = set(self.manifest["bindings"]["inputs"])
+        expected_input_ids = self._program_external_inputs(program_id)
+        expected_inputs = set(expected_input_ids)
         provided_inputs = set(inputs)
         missing = expected_inputs - provided_inputs
         extra = provided_inputs - expected_inputs
@@ -311,8 +444,14 @@ class VulkanPackageRuntime(VulkanExecutor):
             self.device_local_requested and self._has_device_local_memory()
         )
         tensors = self.manifest["tensors"]
-        input_ids = set(self.manifest["bindings"]["inputs"])
-        output_ids = set(self.manifest["bindings"]["outputs"])
+        all_input_ids: set[str] = set()
+        all_output_ids: set[str] = set()
+        for current_program_id in self._program_records:
+            current_inputs, current_outputs = self._program_bindings(current_program_id)
+            all_input_ids.update(current_inputs)
+            all_output_ids.update(current_outputs)
+        input_ids = all_input_ids
+        output_ids = all_output_ids
         for tensor_id, record in tensors.items():
             storage = record["storage"]
             kind = storage["kind"]
@@ -324,6 +463,8 @@ class VulkanPackageRuntime(VulkanExecutor):
                 array = self._validate_input(tensor_id, inputs[tensor_id], record)
             elif kind == "constant":
                 array = self._constant_array(tensor_id, record, dtype, shape)
+            elif kind == "state":
+                array = np.zeros(shape, dtype=dtype)
             else:
                 array = np.empty(shape, dtype=dtype)
             self._tensor_templates[tensor_id] = array
@@ -366,10 +507,16 @@ class VulkanPackageRuntime(VulkanExecutor):
         self._create_program_resources()
         self._prepared = True
 
-    def _validate_inputs(self, inputs: Mapping[str, np.ndarray[Any, Any]]) -> None:
-        expected = set(self.manifest["bindings"]["inputs"])
+    def _validate_inputs(
+        self,
+        program_id: str,
+        inputs: Mapping[str, np.ndarray[Any, Any]],
+    ) -> None:
+        expected = set(self._program_external_inputs(program_id))
         if set(inputs) != expected:
-            raise VulkanExecutionError("输入名称集合与 package manifest 不一致")
+            raise VulkanExecutionError(
+                f"program {program_id} 输入名称集合与 package manifest 不一致"
+            )
         for tensor_id in expected:
             self._validate_input(tensor_id, inputs[tensor_id], self.manifest["tensors"][tensor_id])
 
@@ -458,9 +605,9 @@ class VulkanPackageRuntime(VulkanExecutor):
             self.vk.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         )
         host = None
-        if needs_host or kind == "constant":
+        if needs_host or kind in {"constant", "state"}:
             host = self._create_host_staging(logical_size, array)
-        if kind == "constant" and host is not None and array.nbytes:
+        if kind in {"constant", "state"} and host is not None and array.nbytes:
             self._copy_buffer(host, device, array.nbytes)
         return _TensorAllocation(device, byte_length=array.nbytes, host_allocation=host)
 
@@ -510,8 +657,13 @@ class VulkanPackageRuntime(VulkanExecutor):
         self._tensor_allocations[tensor_id] = resolved
         return resolved
 
-    def _upload_inputs(self, inputs: Mapping[str, np.ndarray[Any, Any]]) -> None:
-        for tensor_id in self.manifest["bindings"]["inputs"]:
+    def _upload_inputs(
+        self,
+        program_id: str,
+        inputs: Mapping[str, np.ndarray[Any, Any]],
+    ) -> None:
+        input_ids = self._program_external_inputs(program_id)
+        for tensor_id in input_ids:
             array = self._validate_input(tensor_id, inputs[tensor_id], self.manifest["tensors"][tensor_id])
             tensor = self._tensor_allocations[tensor_id]
             allocation = tensor.host_allocation or tensor.allocation
@@ -615,118 +767,141 @@ class VulkanPackageRuntime(VulkanExecutor):
             )
 
     def _create_program_resources(self) -> None:
-        if self._program_steps:
-            descriptor_count = sum(
-                len(self._pipeline_records[step["pipeline_id"]]["descriptor_layout"])
-                for step in self._program_steps
-            )
-            pool_sizes = []
-            if descriptor_count:
-                pool_sizes.append(
-                    self.vk.VkDescriptorPoolSize(
-                        type=self.vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                        descriptorCount=descriptor_count,
-                    )
+        programs = [
+            (program_id, tuple(record["steps"]), *self._program_bindings(program_id))
+            for program_id, record in self._program_records.items()
+        ]
+        descriptor_count = sum(
+            len(self._pipeline_records[step["pipeline_id"]]["descriptor_layout"])
+            for _program_id, steps, _inputs, _outputs in programs
+            for step in steps
+        )
+        set_count = sum(len(steps) for _program_id, steps, _inputs, _outputs in programs)
+        pool_sizes = []
+        if descriptor_count:
+            pool_sizes.append(
+                self.vk.VkDescriptorPoolSize(
+                    type=self.vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    descriptorCount=descriptor_count,
                 )
+            )
+        if set_count:
             self._descriptor_pool = self.vk.vkCreateDescriptorPool(
                 self.device,
                 self.vk.VkDescriptorPoolCreateInfo(
-                    maxSets=len(self._program_steps),
+                    maxSets=set_count,
                     poolSizeCount=len(pool_sizes),
                     pPoolSizes=pool_sizes or None,
                 ),
                 None,
             )
-            layouts = [
-                self._pipeline_resources[step["pipeline_id"]].descriptor_layout
-                for step in self._program_steps
-            ]
-            self._descriptor_sets = list(
-                self.vk.vkAllocateDescriptorSets(
-                    self.device,
-                    self.vk.VkDescriptorSetAllocateInfo(
-                        descriptorPool=self._descriptor_pool,
-                        descriptorSetCount=len(layouts),
-                        pSetLayouts=layouts,
-                    ),
-                )
-            )
-            for step, descriptor_set in zip(self._program_steps, self._descriptor_sets, strict=True):
-                resources = self._pipeline_records[step["pipeline_id"]]["descriptor_layout"]
-                writes = []
-                for descriptor in resources:
-                    binding = int(descriptor["binding"])
-                    resource = next(
-                        item for item in step["resources"] if int(item["binding"]) == binding
-                    )
-                    allocation = self._tensor_allocations[resource["tensor_id"]]
-                    descriptor_range = max(4, allocation.byte_length)
-                    if (
-                        allocation.byte_offset < 0
-                        or allocation.byte_offset + descriptor_range
-                        > allocation.allocation.size
-                    ):
-                        raise VulkanExecutionError(
-                            f"tensor {resource['tensor_id']} descriptor range exceeds allocation"
-                        )
-                    buffer_info = self.vk.VkDescriptorBufferInfo(
-                        buffer=allocation.allocation.buffer,
-                        offset=allocation.byte_offset,
-                        range=descriptor_range,
-                    )
-                    writes.append(
-                        self.vk.VkWriteDescriptorSet(
-                            dstSet=descriptor_set,
-                            dstBinding=binding,
-                            descriptorCount=1,
-                            descriptorType=self.vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                            pBufferInfo=[buffer_info],
-                        )
-                    )
-                if writes:
-                    self.vk.vkUpdateDescriptorSets(
-                        self.device,
-                        len(writes),
-                        writes,
-                        0,
-                        None,
-                    )
-
-        # A device-local graph needs a command buffer even when it contains only
-        # copies (for example an Identity/Reshape view or a constant output).
-        if self._program_steps or self.device_local_enabled:
+        if set_count or self.device_local_enabled:
             self._command_pool = self.vk.vkCreateCommandPool(
                 self.device,
                 self.vk.VkCommandPoolCreateInfo(queueFamilyIndex=self.queue_family),
                 None,
             )
-            variant_keys = (
-                ((False, False), (False, True), (True, False), (True, True))
-                if self.device_local_enabled
-                else ((True, True),)
+        for program_id, steps, input_ids, output_ids in programs:
+            external_input_ids = tuple(
+                tensor_id
+                for tensor_id in input_ids
+                if self.manifest["tensors"][tensor_id]["storage"]["kind"] != "state"
             )
-            command_buffers = self.vk.vkAllocateCommandBuffers(
-                self.device,
-                self.vk.VkCommandBufferAllocateInfo(
-                    commandPool=self._command_pool,
-                    level=self.vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-                    commandBufferCount=len(variant_keys),
-                ),
-            )
-            self._command_variants = dict(zip(variant_keys, command_buffers, strict=True))
-            self._command_buffer = self._command_variants[(True, True)]
-            for (copy_inputs, copy_outputs), command_buffer in self._command_variants.items():
-                self._record_program(
-                    command_buffer,
-                    copy_inputs=copy_inputs,
-                    copy_outputs=copy_outputs,
+            layouts = [
+                self._pipeline_resources[step["pipeline_id"]].descriptor_layout
+                for step in steps
+            ]
+            descriptor_sets = []
+            if layouts:
+                if self._descriptor_pool is None:
+                    raise VulkanExecutionError("descriptor pool is unavailable")
+                descriptor_sets = list(
+                    self.vk.vkAllocateDescriptorSets(
+                        self.device,
+                        self.vk.VkDescriptorSetAllocateInfo(
+                            descriptorPool=self._descriptor_pool,
+                            descriptorSetCount=len(layouts),
+                            pSetLayouts=layouts,
+                        ),
+                    )
                 )
+            for step, descriptor_set in zip(steps, descriptor_sets, strict=True):
+                self._write_descriptor_set(step, descriptor_set)
+            command_variants: dict[tuple[bool, bool], Any] = {}
+            if self._command_pool is not None:
+                variant_keys = (
+                    ((False, False), (False, True), (True, False), (True, True))
+                    if self.device_local_enabled
+                    else ((True, True),)
+                )
+                command_buffers = self.vk.vkAllocateCommandBuffers(
+                    self.device,
+                    self.vk.VkCommandBufferAllocateInfo(
+                        commandPool=self._command_pool,
+                        level=self.vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+                        commandBufferCount=len(variant_keys),
+                    ),
+                )
+                command_variants = dict(zip(variant_keys, command_buffers, strict=True))
+                for (copy_inputs, copy_outputs), command_buffer in command_variants.items():
+                    self._record_program(
+                        command_buffer,
+                        steps,
+                        descriptor_sets,
+                        input_ids=external_input_ids,
+                        output_ids=output_ids,
+                        copy_inputs=copy_inputs,
+                        copy_outputs=copy_outputs,
+                    )
+            self._program_resources[program_id] = _ProgramResources(
+                steps, input_ids, output_ids, descriptor_sets, command_variants
+            )
+        if self._command_pool is not None:
             self._fence = self.vk.vkCreateFence(self.device, self.vk.VkFenceCreateInfo(), None)
+
+    def _write_descriptor_set(self, step: Mapping[str, Any], descriptor_set: Any) -> None:
+        resources = self._pipeline_records[step["pipeline_id"]]["descriptor_layout"]
+        writes = []
+        for descriptor in resources:
+            binding = int(descriptor["binding"])
+            resource = next(
+                item for item in step["resources"] if int(item["binding"]) == binding
+            )
+            allocation = self._tensor_allocations[resource["tensor_id"]]
+            descriptor_range = max(4, allocation.byte_length)
+            if (
+                allocation.byte_offset < 0
+                or allocation.byte_offset + descriptor_range > allocation.allocation.size
+            ):
+                raise VulkanExecutionError(
+                    f"tensor {resource['tensor_id']} descriptor range exceeds allocation"
+                )
+            writes.append(
+                self.vk.VkWriteDescriptorSet(
+                    dstSet=descriptor_set,
+                    dstBinding=binding,
+                    descriptorCount=1,
+                    descriptorType=self.vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    pBufferInfo=[
+                        self.vk.VkDescriptorBufferInfo(
+                            buffer=allocation.allocation.buffer,
+                            offset=allocation.byte_offset,
+                            range=descriptor_range,
+                        )
+                    ],
+                )
+            )
+        if writes:
+            self.vk.vkUpdateDescriptorSets(self.device, len(writes), writes, 0, None)
 
     def _record_program(
         self,
         command_buffer: Any,
+        steps: tuple[dict[str, Any], ...],
+        descriptor_sets: list[Any],
         *,
+        input_ids: tuple[str, ...],
+        output_ids: tuple[str, ...],
         copy_inputs: bool,
         copy_outputs: bool,
     ) -> None:
@@ -739,7 +914,7 @@ class VulkanPackageRuntime(VulkanExecutor):
         )
         copied_inputs = False
         if self.device_local_enabled and copy_inputs:
-            for tensor_id in self.manifest["bindings"]["inputs"]:
+            for tensor_id in input_ids:
                 tensor = self._tensor_allocations[tensor_id]
                 if tensor.host_allocation is None or tensor.byte_length <= 0:
                     continue
@@ -750,12 +925,12 @@ class VulkanPackageRuntime(VulkanExecutor):
                     destination_offset=tensor.byte_offset,
                 )
                 copied_inputs = True
-            if copied_inputs and self._program_steps:
+            if copied_inputs and steps:
                 self._record_transfer_to_compute_barrier()
             elif copied_inputs:
                 self._record_transfer_to_transfer_barrier()
 
-        for index, step in enumerate(self._program_steps):
+        for index, step in enumerate(steps):
             pipeline = self._pipeline_resources[step["pipeline_id"]]
             self.vk.vkCmdBindPipeline(
                 command_buffer,
@@ -768,7 +943,7 @@ class VulkanPackageRuntime(VulkanExecutor):
                 pipeline.pipeline_layout,
                 0,
                 1,
-                [self._descriptor_sets[index]],
+                [descriptor_sets[index]],
                 0,
                 None,
             )
@@ -787,16 +962,15 @@ class VulkanPackageRuntime(VulkanExecutor):
                     push_value,
                 )
             self.vk.vkCmdDispatch(command_buffer, *step["workgroups"])
-            if index + 1 < len(self._program_steps):
+            if index + 1 < len(steps):
                 self._record_shader_barrier()
         if self.device_local_enabled:
             copied_outputs = False
-            if copy_outputs and self._program_steps:
-                output_ids = self.manifest["bindings"]["outputs"]
+            if copy_outputs and steps:
                 if output_ids:
                     self._record_compute_to_transfer_barrier()
             if copy_outputs:
-                for tensor_id in self.manifest["bindings"]["outputs"]:
+                for tensor_id in output_ids:
                     tensor = self._tensor_allocations[tensor_id]
                     if tensor.host_allocation is None or tensor.byte_length <= 0:
                         continue
@@ -809,7 +983,7 @@ class VulkanPackageRuntime(VulkanExecutor):
                     copied_outputs = True
             if copied_outputs:
                 self._record_transfer_to_host_barrier()
-        elif self._program_steps:
+        elif steps:
             self._record_host_barrier()
         self.vk.vkEndCommandBuffer(command_buffer)
         self._active_recording_command_buffer = None

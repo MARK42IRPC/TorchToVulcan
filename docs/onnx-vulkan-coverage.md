@@ -121,8 +121,11 @@ The Vulkan schedule IR must additionally represent:
 - reusable subprograms and host-driven call points.
 
 The existing `linear` program remains a compatibility format for the first
-static slice. The next package format must add named subprograms and explicit
-profile records rather than overloading `linear` with hidden conventions.
+static slice. The 0.1 manifest now also accepts named `subprogram` records,
+explicit profile records, persistent state metadata, and host-loop records.
+These records make call boundaries and lifetimes explicit without changing the
+old `main/linear` reader. They do not yet provide general device-side control
+flow or dynamic tensor allocation.
 
 ## Dynamic shapes and control flow
 
@@ -134,10 +137,12 @@ The implementation order is deliberately conservative:
 4. host-driven `If` and `Loop` subprograms;
 5. device-side control flow where it is demonstrably useful.
 
-The host-driven stage is sufficient for autoregressive models. A host loop can
-invoke a Vulkan subprogram, read a small stop flag or token, update KV-cache
-bindings, and invoke the next iteration. It may be slower, but it keeps control
-semantics explicit while tensor computation remains on Vulkan.
+The host-driven stage is sufficient for the first autoregressive integration
+slice. A host loop can invoke a Vulkan subprogram, read a small stop flag or
+token, and invoke the next iteration while persistent state buffers stay on the
+same device. It may be slower, but it keeps control semantics explicit while
+tensor computation remains on Vulkan. Full KV-cache append and sampling still
+need a model-level contract and kernels.
 
 ## Dtype and quantization policy
 
@@ -183,12 +188,11 @@ baseline.
 
 The first static Transformer acceptance slice is now device-verified for
 batched MatMul, `ReduceMean`, `Softmax`, `LayerNormalization`, and their
-composition in the linear TTV package. The next implementation order is:
+composition in the linear TTV package. The current implementation order is:
 
-1. named subprograms and explicit package profiles;
-2. host-driven loops, persistent state tensors, and KV-cache;
-3. INT8 dequantization and offline INT4 weight dequantization;
-4. native quantized kernels and broader Transformer/Aemeath subgraphs.
+1. KV-cache token append, position bounds, and attention cache layout;
+2. INT8 dequantization and offline INT4 weight dequantization;
+3. native quantized kernels and broader Transformer/Aemeath subgraphs.
 
 The Transformer sequence is an engineering acceptance path, not a promise of
 general Transformer or Aemeath support. Each step must pass normalization,

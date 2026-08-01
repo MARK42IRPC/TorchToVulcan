@@ -47,14 +47,15 @@
 Transformer baseline 的阶段、限制和验收证据见
 [`transformer-baseline.md`](transformer-baseline.md)。当前优先顺序是批量
 MatMul、reduction、LayerNorm/Softmax 和静态 block 均已完成第一轮验收；
-当前主线转向 subprogram、host-driven loop 与 KV-cache 契约。性能优化不
-属于这一里程碑的退出条件。
+当前主线已完成 subprogram、profile、持久 state 和 host-driven loop 的第一
+切片，下一步是 KV-cache 的真实 token append/position 语义。性能优化不属于
+这一里程碑的退出条件。
 
 ## Later work
 
 - normalized ONNX IR with symbolic dimensions, layouts, subprograms, and
-  quantization metadata (the first normalized tensor/node/graph IR is now in
-  place; subprogram and quantization records remain);
+  quantization metadata (the first normalized tensor/node/graph IR and package
+  subprogram/state records are now in place; quantization records remain);
 - FP16 and capability-based kernel selection;
 - operator fusion and autotuning;
 - bounded dynamic shapes;

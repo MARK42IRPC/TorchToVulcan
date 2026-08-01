@@ -132,6 +132,75 @@ class ExecutablePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutablePackageError, "expected 16"):
             builder.add_constant("weight", "FLOAT", (4,), b"\x00" * 4)
 
+    def test_writes_named_subprogram_profile_state_and_host_loop_contract(self) -> None:
+        builder = ExecutablePackageBuilder("stateful-add")
+        builder.add_profile("batch1", {"batch": 1})
+        builder.add_tensor("x", "FLOAT", (1, 4), storage="external")
+        builder.add_state_tensor(
+            "cache",
+            "FLOAT",
+            (1, 4),
+            state_id="kv_cache",
+            update_program="decode",
+        )
+        builder.add_subprogram(
+            "decode",
+            inputs=("x", "cache"),
+            outputs=("cache",),
+        )
+        builder.add_dispatch(
+            "decode_add",
+            "elementwise.add.fp32",
+            add_plan().steps[0],
+            TEST_SPIRV,
+            ("cache", "x", "cache"),
+            program_id="decode",
+        )
+        builder.add_host_loop(
+            "decode_loop",
+            "decode",
+            max_iterations=4,
+            stop_tensor="cache",
+        )
+
+        destination = self.root / "stateful.ttv"
+        manifest = builder.write(destination)
+
+        self.assertEqual(manifest["profiles"][0]["id"], "batch1")
+        self.assertEqual(manifest["programs"][1]["kind"], "subprogram")
+        self.assertEqual(manifest["states"][0]["tensor_id"], "cache")
+        self.assertEqual(manifest["loops"][0]["program"], "decode")
+        self.assertEqual(validate_executable_package(destination), manifest)
+
+    def test_rejects_a_host_loop_that_does_not_expose_its_stop_tensor(self) -> None:
+        builder = ExecutablePackageBuilder("invalid-loop")
+        builder.add_tensor("x", "FLOAT", (1, 4), storage="external")
+        builder.add_tensor("y", "FLOAT", (1, 4), storage="transient")
+        builder.add_tensor("stop", "INT32", (1,), storage="transient")
+        builder.add_subprogram("decode", inputs=("x",), outputs=("y",))
+        with self.assertRaisesRegex(ExecutablePackageError, "termination tensor"):
+            builder.add_host_loop(
+                "decode_loop",
+                "decode",
+                max_iterations=2,
+                stop_tensor="stop",
+            )
+
+    def test_rejects_a_state_update_without_input_output_signature(self) -> None:
+        builder = ExecutablePackageBuilder("invalid-state-update")
+        builder.add_tensor("x", "FLOAT", (1, 4), storage="external")
+        builder.add_state_tensor(
+            "cache",
+            "FLOAT",
+            (1, 4),
+            state_id="kv_cache",
+            update_program="decode",
+        )
+        builder.add_subprogram("decode", inputs=("x",), outputs=("x",))
+
+        with self.assertRaisesRegex(ExecutablePackageError, "input and output"):
+            builder.write(self.root / "invalid-state-update.ttv")
+
     def test_cli_validates_a_materialized_package(self) -> None:
         destination = self.root / "model.ttv"
         package_builder().write(destination)
